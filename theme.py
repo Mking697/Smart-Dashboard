@@ -185,7 +185,12 @@ p, li, label, .stMarkdown {{ color: var(--c-body); }}
   background: linear-gradient(180deg, #10224B 0%, #14275A 100%);
   border-right: 1px solid rgba(255,255,255,.06);
 }}
-[data-testid="stSidebar"] * {{ color: #DCE6FA !important; }}
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] li,
+[data-testid="stSidebar"] a,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {{ color: #DCE6FA; }}
 [data-testid="stSidebar"] h1,
 [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3 {{ color: #FFFFFF !important; font-size: .82rem !important;
@@ -258,18 +263,66 @@ p, li, label, .stMarkdown {{ color: var(--c-body); }}
 .stTabs [data-baseweb="tab-highlight"] {{ background: var(--c-primary); height: 3px; }}
 
 /* ---- Controls ---------------------------------------------------------- */
-.stButton > button {{
+.stButton > button,
+[data-testid="stDownloadButton"] > button,
+[data-testid="stFormSubmitButton"] > button {{
   border-radius: 8px; font-weight: 550; letter-spacing: .01em;
-  border: 1px solid var(--c-border-strong); background: var(--c-surface); color: var(--c-heading);
+  border: 1px solid var(--c-border-strong); background: var(--c-surface);
   transition: transform .16s var(--ease), box-shadow .16s var(--ease), background .16s var(--ease);
 }}
-.stButton > button:hover {{ border-color: var(--c-primary); color: var(--c-primary); box-shadow: var(--shadow-1); }}
-.stButton > button:active {{ transform: scale(.985); }}
-.stButton > button[kind="primary"] {{
-  background: linear-gradient(135deg, var(--c-primary), #2B52C8);
-  border: none; color: #fff;
+/* The label is a <p> inside the button. Colour it directly or the global
+   paragraph rule wins and the text disappears into the button. */
+.stButton > button, .stButton > button *,
+[data-testid="stDownloadButton"] > button, [data-testid="stDownloadButton"] > button *,
+[data-testid="stFormSubmitButton"] > button, [data-testid="stFormSubmitButton"] > button * {{
+  color: var(--c-heading);
 }}
-.stButton > button[kind="primary"]:hover {{ box-shadow: 0 6px 16px -4px rgba(30,64,175,.45); color: #fff; }}
+.stButton > button:hover, .stButton > button:hover *,
+[data-testid="stDownloadButton"] > button:hover, [data-testid="stDownloadButton"] > button:hover *,
+[data-testid="stFormSubmitButton"] > button:hover, [data-testid="stFormSubmitButton"] > button:hover * {{
+  color: var(--c-primary);
+}}
+.stButton > button:hover,
+[data-testid="stDownloadButton"] > button:hover,
+[data-testid="stFormSubmitButton"] > button:hover {{
+  border-color: var(--c-primary); box-shadow: var(--shadow-1);
+}}
+.stButton > button:active,
+[data-testid="stFormSubmitButton"] > button:active {{ transform: scale(.985); }}
+
+/* Primary: white label on the gradient, in every state. */
+.stButton > button[kind="primary"],
+[data-testid="stFormSubmitButton"] > button[kind="primary"],
+[data-testid="stFormSubmitButton"] > button[kind="primaryFormSubmit"] {{
+  background: linear-gradient(135deg, var(--c-primary), #2B52C8);
+  border: none;
+}}
+.stButton > button[kind="primary"], .stButton > button[kind="primary"] *,
+.stButton > button[kind="primary"]:hover, .stButton > button[kind="primary"]:hover *,
+[data-testid="stFormSubmitButton"] > button[kind="primary"],
+[data-testid="stFormSubmitButton"] > button[kind="primary"] *,
+[data-testid="stFormSubmitButton"] > button[kind="primaryFormSubmit"],
+[data-testid="stFormSubmitButton"] > button[kind="primaryFormSubmit"] * {{
+  color: #FFFFFF;
+}}
+.stButton > button[kind="primary"]:hover,
+[data-testid="stFormSubmitButton"] > button[kind="primary"]:hover,
+[data-testid="stFormSubmitButton"] > button[kind="primaryFormSubmit"]:hover {{
+  box-shadow: 0 6px 16px -4px rgba(30,64,175,.45);
+}}
+
+/* Sidebar buttons sit on navy, so they need their own light treatment. */
+[data-testid="stSidebar"] .stButton > button {{
+  background: rgba(255,255,255,.09);
+  border: 1px solid rgba(255,255,255,.20);
+}}
+[data-testid="stSidebar"] .stButton > button,
+[data-testid="stSidebar"] .stButton > button *,
+[data-testid="stSidebar"] .stButton > button:hover,
+[data-testid="stSidebar"] .stButton > button:hover * {{ color: #F2F6FF; }}
+[data-testid="stSidebar"] .stButton > button:hover {{
+  background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.38);
+}}
 
 /* Keyboard focus must stay visible - never trade a11y for looks. */
 .stButton > button:focus-visible,
