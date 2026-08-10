@@ -16,7 +16,11 @@ what it found.
   lone `END`/`Total` footers, empty columns, stray spaces (`" Noida"`) and
   placeholders (`N/A`, `-`, `NULL`) are cleaned, and the app shows you a report of
   everything it changed.
-- **Multi-sheet workspaces** — every sheet gets its own dashboard, plus a master comparison view.
+- **Multi-sheet workspaces** — every sheet gets its **own complete set of reports**,
+  analysed on its own data. Sheets are never merged into one table, because sheets
+  with different columns produce a mostly-blank result and broken totals. When more
+  than one sheet is loaded, a final **⚖️ Auto Compare** section stacks them up:
+  sizes, headline numbers, shared columns and the same breakdown side by side.
 - **Google Sheets Live Sync** — paste a sheet link and pull live data. Public sheets
   work instantly; private sheets connect through a Google service account.
 

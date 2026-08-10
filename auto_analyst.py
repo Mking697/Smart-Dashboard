@@ -808,6 +808,268 @@ def build_ai_briefing(dataframe, profiles, scenarios):
 # Entry point
 # --------------------------------------------------------------------------- #
 
+def _slug(text):
+    """Widget-key-safe version of a sheet name."""
+    return re.sub(r'[^a-zA-Z0-9]+', '_', str(text)).strip('_').lower() or 'sheet'
+
+
+def render_sheet_sections(sheets, key_prefix, ai_callback=None):
+    """One self-contained section per sheet, plus an automatic comparison.
+
+    Sheets are never merged for analysis. Different sheets have different
+    columns, and concatenating them produces a table that is mostly blank -
+    every total then looks broken. Each sheet is profiled on its own.
+    """
+    names = list(sheets.keys())
+
+    if len(names) == 1:
+        render_auto_dashboard(sheets[names[0]], key_prefix, ai_callback)
+        return
+
+    st.info(
+        f"📚 **{len(names)} sheets loaded.** Each one gets its own section below, because "
+        "sheets with different columns must be measured separately. The last section "
+        "compares them."
+    )
+
+    labels = [f"📄 {name}" for name in names] + ["⚖️ Auto Compare"]
+
+    # Streamlit renders every tab eagerly, so past a handful of sheets a picker
+    # keeps the page fast instead of building dozens of charts at once.
+    if len(names) <= 4:
+        tabs = st.tabs(labels)
+        for tab, name in zip(tabs, names):
+            with tab:
+                _render_one_sheet(name, sheets[name], key_prefix, ai_callback)
+        with tabs[-1]:
+            render_comparison(sheets, key_prefix)
+        return
+
+    choice = st.selectbox("Which sheet do you want to look at?", labels, key=f"sheetpick_{key_prefix}")
+    if choice == "⚖️ Auto Compare":
+        render_comparison(sheets, key_prefix)
+    else:
+        name = names[labels.index(choice)]
+        _render_one_sheet(name, sheets[name], key_prefix, ai_callback)
+
+
+def _render_one_sheet(name, dataframe, key_prefix, ai_callback):
+    st.markdown(f"### 📄 Sheet: {name}")
+    st.caption(f"{len(dataframe):,} rows × {len(dataframe.columns)} columns — analysed on its own.")
+    render_auto_dashboard(dataframe, f"{key_prefix}_{_slug(name)}", ai_callback)
+
+
+# --------------------------------------------------------------------------- #
+# Auto comparison across sheets
+# --------------------------------------------------------------------------- #
+
+def _readable_column_map(frame):
+    """{readable name: actual column} so sheets can be matched despite naming."""
+    mapping = {}
+    for column in frame.columns:
+        mapping.setdefault(humanize(column).lower(), column)
+    return mapping
+
+
+def _role_of(profiles, column):
+    for profile in profiles:
+        if profile['name'] == column:
+            return profile['role']
+    return None
+
+
+def render_comparison(sheets, key_prefix):
+    """Compare sheets - on shared columns where they exist, on headlines otherwise."""
+    st.markdown("### ⚖️ Auto Compare — how your sheets stack up")
+
+    names = list(sheets.keys())
+    profiles = {name: profile_dataframe(frame) for name, frame in sheets.items()}
+    column_maps = {name: _readable_column_map(sheets[name]) for name in names}
+
+    # ---- 1. Size ----------------------------------------------------------
+    sizes = pd.DataFrame({
+        'Sheet': names,
+        'Rows': [len(sheets[name]) for name in names],
+        'Columns': [len(sheets[name].columns) for name in names],
+        'Numbers to measure': [len(rank_measures(profiles[name])) for name in names],
+        'Groups to compare': [len(rank_categories(profiles[name])) for name in names],
+    })
+
+    st.markdown("##### 📏 Chart 1 — How big is each sheet?")
+    fig = px.bar(sizes, x='Sheet', y='Rows', color='Sheet', text_auto=True,
+                 title="Records per sheet", color_discrete_sequence=PALETTE)
+    fig.update_layout(height=380, showlegend=False)
+    st.plotly_chart(fig, use_container_width=True, key=f"cmp_rows_{key_prefix}")
+    explain("Each bar is one sheet — simply how much data it holds. A much smaller bar "
+            "may mean that sheet is incomplete.")
+    st.dataframe(sizes, use_container_width=True, hide_index=True)
+
+    biggest = sizes.loc[sizes['Rows'].idxmax()]
+    takeaway(f"**{biggest['Sheet']}** is your largest sheet with **{biggest['Rows']:,} records**, "
+             f"out of {sizes['Rows'].sum():,} across all {len(names)} sheets.")
+
+    # ---- 2. Headline number per sheet - works even with nothing in common --
+    headline = []
+    for name in names:
+        measures = rank_measures(profiles[name])
+        if measures:
+            headline.append({
+                'Sheet': name,
+                'Headline number': humanize(measures[0]['name']),
+                'Total': float(measures[0].get('total', 0)),
+            })
+
+    if headline:
+        head_frame = pd.DataFrame(headline)
+        st.markdown("##### 💰 Chart 2 — The headline number in each sheet")
+        fig = px.bar(head_frame, x='Sheet', y='Total', color='Sheet', text='Headline number',
+                     title="Each sheet's main number", color_discrete_sequence=PALETTE)
+        fig.update_traces(textposition='outside')
+        fig.update_layout(height=420, showlegend=False)
+        st.plotly_chart(fig, use_container_width=True, key=f"cmp_headline_{key_prefix}")
+        explain("Every sheet has one number that matters most — the label on each bar says "
+                "which one. These may be different things, so compare the scale, not the meaning.")
+
+        top = head_frame.loc[head_frame['Total'].idxmax()]
+        takeaway(f"**{top['Sheet']}** carries the largest headline figure: "
+                 f"**{top['Headline number']} = {top['Total']:,.0f}**.")
+
+    # ---- 3. What the sheets share ----------------------------------------
+    shared = set.intersection(*[set(column_maps[name].keys()) for name in names])
+
+    st.markdown("##### 🧩 What do these sheets have in common?")
+    if shared:
+        st.success(f"✅ **{len(shared)} column(s)** appear in every sheet (matched by their "
+                   "readable name), so they can be compared directly.")
+    else:
+        st.warning("⚠️ These sheets have no column in common, so only their size and headline "
+                   "numbers can be compared. That usually means they describe different things "
+                   "— sales orders versus purchases, for example.")
+
+    with st.expander("See which columns are shared and which are unique to one sheet"):
+        rows = []
+        for name in names:
+            unique = sorted(set(column_maps[name].keys()) - shared)
+            preview = ", ".join(key.title() for key in unique[:8])
+            rows.append({
+                'Sheet': name,
+                'Shared columns': len(shared),
+                'Only in this sheet': (preview + ("…" if len(unique) > 8 else "")) or "—",
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        if shared:
+            st.caption("Shared: " + ", ".join(sorted(key.title() for key in shared)))
+
+    if not shared:
+        return
+
+    # ---- 4. Shared measures, side by side ---------------------------------
+    shared_measures = [
+        key for key in sorted(shared)
+        if all(_role_of(profiles[name], column_maps[name][key]) == 'measure' for name in names)
+    ]
+
+    if shared_measures:
+        picked = st.multiselect(
+            "Which numbers should we compare?",
+            shared_measures, default=shared_measures[:3],
+            format_func=str.title, key=f"cmp_measures_{key_prefix}",
+        )
+
+        if picked:
+            totals = pd.DataFrame([
+                {'Sheet': name, 'Measure': key.title(),
+                 'Total': float(pd.to_numeric(sheets[name][column_maps[name][key]],
+                                              errors='coerce').sum())}
+                for name in names for key in picked
+            ])
+
+            st.markdown("##### 📊 Chart 3 — Same numbers, sheet by sheet")
+            fig = px.bar(totals, x='Measure', y='Total', color='Sheet', barmode='group',
+                         text_auto='.2s', title="Shared totals compared across sheets",
+                         color_discrete_sequence=PALETTE)
+            fig.update_layout(height=430)
+            st.plotly_chart(fig, use_container_width=True, key=f"cmp_measures_chart_{key_prefix}")
+            explain("Bars are grouped by measure and coloured by sheet. Comparing bars inside "
+                    "one group tells you which sheet carries more of that number.")
+
+            lead = totals.loc[totals['Total'].idxmax()]
+            takeaway(f"The biggest shared figure is **{lead['Measure']}** in **{lead['Sheet']}**, "
+                     f"totalling **{lead['Total']:,.0f}**.")
+
+    # ---- 5. Shared breakdown ----------------------------------------------
+    shared_dims = []
+    for key in sorted(shared):
+        ok = True
+        for name in names:
+            column = column_maps[name][key]
+            profile = next((p for p in profiles[name] if p['name'] == column), None)
+            if not profile or profile['role'] not in ('category', 'geo', 'flag') \
+                    or not (2 <= profile['n_unique'] <= 30):
+                ok = False
+                break
+        if ok:
+            shared_dims.append(key)
+
+    if not shared_dims:
+        return
+
+    st.markdown("##### 🔍 Chart 4 — The same breakdown in every sheet")
+    control1, control2 = st.columns(2)
+    with control1:
+        dim_key = st.selectbox("Break down by", shared_dims, format_func=str.title,
+                               key=f"cmp_dim_{key_prefix}")
+    with control2:
+        metric_key = st.selectbox("Measure", shared_measures + ["Record count"],
+                                  format_func=lambda k: "Number of Records" if k == "Record count" else k.title(),
+                                  key=f"cmp_dimmetric_{key_prefix}")
+
+    frames = []
+    for name in names:
+        frame = sheets[name]
+        dim_col = column_maps[name][dim_key]
+        labels = frame[dim_col].astype(str).str.strip()
+
+        if metric_key == "Record count":
+            grouped = labels.value_counts().reset_index()
+            grouped.columns = ['Group', 'Value']
+        else:
+            values = pd.to_numeric(frame[column_maps[name][metric_key]], errors='coerce')
+            grouped = pd.DataFrame({'Group': labels, 'Value': values})
+            grouped = grouped.dropna(subset=['Value']).groupby('Group', as_index=False)['Value'].sum()
+
+        grouped['Sheet'] = name
+        frames.append(grouped)
+
+    combined = pd.concat(frames, ignore_index=True)
+    combined = combined[combined['Group'].str.lower() != 'nan']
+    top_groups = combined.groupby('Group')['Value'].sum().nlargest(12).index
+    combined = combined[combined['Group'].isin(top_groups)]
+
+    if combined.empty:
+        return
+
+    metric_name = "Number of Records" if metric_key == "Record count" else metric_key.title()
+    fig = px.bar(combined, x='Group', y='Value', color='Sheet', barmode='group',
+                 title=f"{metric_name} by {dim_key.title()}, per sheet",
+                 labels={'Group': dim_key.title(), 'Value': metric_name},
+                 color_discrete_sequence=PALETTE)
+    fig.update_layout(height=460, xaxis_tickangle=-40)
+    st.plotly_chart(fig, use_container_width=True, key=f"cmp_dim_chart_{key_prefix}")
+    explain(f"Each cluster is one {dim_key.title()}, with one bar per sheet. A missing or tiny "
+            "bar shows where a sheet is behind the others.")
+
+    pivot = combined.pivot_table(index='Group', columns='Sheet', values='Value', aggfunc='sum').fillna(0)
+    if len(pivot.columns) >= 2 and len(pivot):
+        spread = (pivot.max(axis=1) - pivot.min(axis=1)).sort_values(ascending=False)
+        widest = spread.index[0]
+        row = pivot.loc[widest]
+        takeaway(
+            f"The widest gap between sheets is at **{widest}** — **{row.idxmax()}** records "
+            f"{row.max():,.0f} while **{row.idxmin()}** records only {row.min():,.0f}."
+        )
+
+
 def render_auto_dashboard(dataframe, key_prefix, ai_callback=None):
     """Profile the data, explain it, then build every scenario it supports."""
     if dataframe is None or dataframe.empty:

@@ -101,6 +101,14 @@ Auto Analyst briefing. All calls wrapped in try/except.
 9. **The sparse-row filter must back off.** If more than half the rows look sparse
    the data genuinely is sparse, so nothing is dropped. Without that guard the
    cleaner would delete real datasets.
+10. **Never merge sheets for analysis.** Concatenating three sheets with different
+    columns produced 80 columns that were 68% blank, and the headline charts came
+    out empty. `render_sheet_sections` gives each sheet its own section and adds an
+    Auto Compare section at the end. The merged `master_df` is only for the manual
+    dashboard's Source_Sheet comparison and the free-form AI chat.
+11. **Auto Compare matches columns by their readable name**, not the raw header, so
+    `TotalAmount` and `Total_Amount` line up. When sheets share nothing, it still
+    compares row counts and each sheet's headline measure.
 
 ---
 

@@ -392,7 +392,7 @@ if raw_sheets:
                 "No axis picking needed — the data is profiled, and every dashboard it can "
                 "support is built for you."
             )
-            auto_analyst.render_auto_dashboard(master_df, key_prefix, ai_callback=run_ai_briefing)
+            auto_analyst.render_sheet_sections(dict_of_dfs, key_prefix, ai_callback=run_ai_briefing)
 
         with manual_tab:
             render_workspace(dict_of_dfs, key_prefix)
