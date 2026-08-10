@@ -26,6 +26,8 @@ from datetime import datetime, timedelta, timezone
 import requests
 import streamlit as st
 
+import theme
+
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 DB_PATH = os.path.join(DATA_DIR, "users.db")
 
@@ -556,8 +558,9 @@ def require_login():
 
     left_margin, panel, right_margin = st.columns([1, 2, 1])
     with panel:
-        st.title("🚀 AI Smart Dashboard")
-        st.caption("Your sheet in. Ready-made reports out.")
+        st.write("")
+        theme.brand_header()
+        st.write("")
         _pitch()
         st.divider()
 

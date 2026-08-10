@@ -15,6 +15,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import geo_assets as geo
+import theme
 
 US_STATE_CODES = {
     'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'DC', 'FL', 'GA', 'HI', 'ID',
@@ -233,10 +234,10 @@ def style_and_render(fig, zoom, metric_label, key, height=580):
         fig.update_geos(scope='world')
 
     fig.update_geos(
-        showcountries=True, countrycolor='#c9d3dd',
-        showcoastlines=True, coastlinecolor='#b7c3ce',
-        showland=True, landcolor='#f2f5f8',
-        showocean=True, oceancolor='#eaf2fb',
+        showcountries=True, countrycolor=theme.BORDER_STRONG,
+        showcoastlines=True, coastlinecolor=theme.BORDER_STRONG,
+        showland=True, landcolor=theme.MUTED,
+        showocean=True, oceancolor='#EEF4FF',
         showlakes=False, showframe=False,
     )
     fig.update_layout(

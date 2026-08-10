@@ -11,6 +11,7 @@ import auth
 import auto_analyst
 import data_cleaner
 import geo_maps
+import theme
 from google_sheets import SheetAccessError, load_workbook, service_account_email
 
 # 1. Load API Key
@@ -22,7 +23,10 @@ if API_KEY:
     genai.configure(api_key=API_KEY)
 
 # Page Configuration
-st.set_page_config(page_title="AI Smart Dashboard", layout="wide", page_icon="📊")
+st.set_page_config(page_title="Autolyst — AI Smart Dashboard", layout="wide", page_icon="📊")
+
+# The whole visual system - fonts, colours, component styling, chart template.
+theme.apply()
 
 # --- UPDATED SMART DATA CLEANING FUNCTION ---
 def auto_fix_headers(df):
@@ -427,8 +431,7 @@ drop_sparse_rows = st.sidebar.toggle(
 title_area, guide_area = st.columns([5, 1])
 
 with title_area:
-    st.title("🚀 AI-Powered Master Dashboard (Power BI Edition)")
-    st.caption("Upload a file or sync a live Google Sheet — the dashboard builds itself.")
+    theme.brand_header()
 
 with guide_area:
     st.write("")

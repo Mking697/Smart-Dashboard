@@ -17,6 +17,7 @@ import plotly.express as px
 import streamlit as st
 
 import geo_maps
+import theme
 
 # Column names that usually signal a real business measure worth totalling.
 MEASURE_HINTS = (
@@ -30,7 +31,7 @@ IDENTIFIER_HINTS = ('id', 'code', 'uuid', 'guid', 'ref', 'number', 'no', 'key', 
 DATE_HINTS = ('date', 'time', 'day', 'month', 'year', 'created', 'updated', 'timestamp', 'dob')
 
 PROFILE_SAMPLE_ROWS = 50_000
-PALETTE = px.colors.qualitative.Bold
+PALETTE = theme.CATEGORICAL
 
 
 # --------------------------------------------------------------------------- #
