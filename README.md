@@ -9,6 +9,15 @@ what it found.
 
 ## 🔥 Key Features
 
+### 🔐 Accounts
+- **Sign up once** with your name, email and password.
+- **Email verification** — a six-digit code is sent through Brevo; the account is
+  inactive until it is confirmed.
+- **Log in** with email and password from then on. One account per email address.
+- Passwords are stored as salted PBKDF2-HMAC-SHA256 hashes, never in the clear.
+  Codes expire, wrong guesses are limited, and repeated failed logins lock the
+  account for 15 minutes.
+
 ### 📥 Data In
 - **Messy file support** — upload Excel/CSV; headers are detected and repaired automatically.
 - **Unmanaged sheets get managed** — only rows that actually contain data are used.
@@ -88,8 +97,17 @@ pip install -r requirements.txt
 Create a `.env` file in the project root:
 
 ```env
+# Gemini - powers the AI briefing, deep dive and chat
 GEMINI_API_KEY=your_key_here
+
+# Brevo - sends signup verification codes
+BREVO_API_KEY=your_brevo_key
+BREVO_SENDER_EMAIL=noreply@yourdomain.com
+BREVO_SENDER_NAME=AI Smart Dashboard
 ```
+
+> The Brevo sender address must be **verified in your Brevo account**, or the
+> emails are rejected.
 
 Run it:
 
@@ -111,6 +129,7 @@ streamlit run app.py
 
 ```
 app.py                          Orchestrator: data sources, workspace, AI panels
+auth.py                         Signup, email OTP, login, session gate
 data_cleaner.py                 Cleans unmanaged sheets, reports every change
 auto_analyst.py                 Profiling engine + automatic dashboards
 geo_maps.py                     Map detection and rendering
@@ -130,6 +149,7 @@ development context.
 - [x] Smart cleaning, multi-sheet dashboards, AI deep dive
 - [x] Google Sheets live sync
 - [x] India-accurate geography + automatic dashboard generation
+- [x] Accounts: signup, email OTP verification, login
 - [ ] 1-click PDF report export
 - [ ] Scheduled email reports (hourly / daily / monthly)
-- [ ] Multi-tenant authentication
+- [ ] Subscription plans and billing

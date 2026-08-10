@@ -18,6 +18,7 @@ but reads and explains the data instead of only plotting it.
 | File | Responsibility |
 |---|---|
 | `app.py` | Orchestrator only: data-source panels, cleaning report, workspace/tabs, manual dashboard, AI deep-dive + chat. |
+| `auth.py` | Signup, email OTP verification, login, and the Streamlit gate in front of everything. |
 | `data_cleaner.py` | Turns an unmanaged sheet into a usable table, and reports every change it made. |
 | `google_sheets.py` | Google Sheets connector. Public sheets via XLSX export, private sheets via service account. Raises `SheetAccessError(msg, hint)`. |
 | `geo_maps.py` | All map rendering. Detects what a location column *is*, then draws the right map. |
@@ -39,6 +40,22 @@ Never import backwards; `geo_assets` must stay Streamlit-free.
   private sheets use a service account JSON (uploaded in the UI, or
   `[gcp_service_account]` in `.streamlit/secrets.toml`). Cached 5 min, refresh
   token busts the cache. Every failure has a friendly `hint`.
+
+### 1a. Accounts (`auth.py`)
+One account per email. Sign up with name, email and password, confirm a six-digit
+code emailed through **Brevo**, then log in with email and password from then on.
+`require_login()` renders the gate and `st.stop()`s, so nothing else in `app.py`
+runs for a signed-out visitor.
+
+Storage is SQLite at `data/users.db` (gitignored - it holds real emails and
+password hashes). Passwords are PBKDF2-HMAC-SHA256, 600k iterations, per-user
+salt. **PBKDF2 is deliberate**: it ships with Python, so there is no compiled
+dependency that can fail to build on a small server.
+
+Abuse guards: OTP expires in 10 minutes, dies after 5 wrong attempts, 60-second
+resend cooldown; login locks for 15 minutes after 5 failures; wrong password and
+unknown email return the *same* message so the form cannot be used to discover
+which addresses are registered.
 
 ### 1b. Cleaning (`data_cleaner.py`)
 Runs after `auto_fix_headers`, before anything is charted. Only rows that carry
@@ -120,6 +137,12 @@ Auto Analyst briefing. All calls wrapped in try/except.
 11. **Auto Compare matches columns by their readable name**, not the raw header, so
     `TotalAmount` and `Total_Amount` line up. When sheets share nothing, it still
     compares row counts and each sheet's headline measure.
+12. **Never raise inside `auth._connect()`.** The context manager commits only when
+    the block exits cleanly, so raising after a write rolls it back. This silently
+    disabled the OTP attempt counter - every wrong guess reported "4 attempts left"
+    and a six-digit code was open to unlimited brute force. `verify_otp` now decides
+    the outcome inside the transaction and raises after it closes. Any new write
+    followed by an error must do the same.
 
 ---
 
@@ -141,7 +164,11 @@ errors in the log). The `Revenue`-as-identifier bug is **fixed and verified**.
    run **APScheduler in a separate `scheduler.py` process** that re-fetches the
    Google Sheet, regenerates the PDF, and mails it via SMTP. Store jobs in a small
    local DB/JSON so they survive restarts.
-3. Multi-tenant auth and per-user workspaces.
+3. **Subscriptions.** Accounts already exist, so this is a plan/limit layer on top:
+   a `plan` column on `users`, usage counters, and a payment provider. Nothing in
+   `auth.py` needs restructuring for it.
+4. Per-user saved workspaces (uploads are currently in-session only, so no data
+   is shared between accounts today).
 
 **Rules:** deliver in modular steps and wait for approval between them; keep the UI
 premium and clean; handle every error gracefully with an actionable hint; and never

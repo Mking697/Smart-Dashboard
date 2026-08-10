@@ -4,6 +4,10 @@
 *service-account*.json
 *credentials*.json
 
+# User accounts database - real people's emails and password hashes
+data/
+*.db
+
 # Python
 venv/
 __pycache__/

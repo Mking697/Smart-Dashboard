@@ -10,6 +10,9 @@ long-running process alive.
 
 - [ ] `.env` is **not** committed (it is in `.gitignore` — keep it that way).
 - [ ] `GEMINI_API_KEY` is set as a platform secret, not in the code.
+- [ ] `BREVO_API_KEY` and `BREVO_SENDER_EMAIL` are set, and the sender address is
+      **verified in Brevo** — unverified senders are rejected and nobody can sign up.
+- [ ] `data/` is **not** committed — it holds real user emails and password hashes.
 - [ ] `assets/india_districts.geojson` (4 MB) is committed — the India maps need it.
 - [ ] `requirements.txt` is current.
 - [ ] Service account JSON, if used, goes in secrets — never in the repo.
@@ -114,6 +117,21 @@ nano ~/Smart-Dashboard/.env          # GEMINI_API_KEY=your_real_key
 sudo systemctl restart dashboard
 ```
 
+### Back up the user accounts
+
+Accounts live in one SQLite file. Losing it means every user has to sign up again,
+so copy it somewhere off the instance on a schedule:
+
+```bash
+# on the server
+sqlite3 ~/Smart-Dashboard/data/users.db ".backup /tmp/users-backup.db"
+
+# from your own machine
+scp -i your-key.pem ubuntu@<your-ip>:/tmp/users-backup.db .
+```
+
+`git pull` never touches it — `data/` is gitignored.
+
 ### Day-to-day
 
 ```bash
@@ -144,6 +162,9 @@ tier, so expect roughly $5–25/month.
 
 ```toml
 GEMINI_API_KEY = "your_key_here"
+BREVO_API_KEY = "your_brevo_key"
+BREVO_SENDER_EMAIL = "noreply@yourdomain.com"
+BREVO_SENDER_NAME = "AI Smart Dashboard"
 
 # Only if you use private Google Sheets:
 [gcp_service_account]

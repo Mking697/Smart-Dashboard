@@ -89,10 +89,17 @@ echo "    dependencies installed"
 say "5/7  API key"
 if [ ! -f "$APP_DIR/.env" ]; then
     cat > "$APP_DIR/.env" <<'ENVFILE'
+# Gemini - powers the AI briefing, deep dive and chat
 GEMINI_API_KEY=paste_your_key_here
+
+# Brevo - sends the signup verification codes.
+# The sender address must be verified in your Brevo account or mail is rejected.
+BREVO_API_KEY=paste_your_brevo_key_here
+BREVO_SENDER_EMAIL=noreply@yourdomain.com
+BREVO_SENDER_NAME=AI Smart Dashboard
 ENVFILE
     chmod 600 "$APP_DIR/.env"
-    echo "    .env created - put your real key in it before using the AI features"
+    echo "    .env created - fill in your keys before using AI or signup"
 else
     echo "    .env already exists, left untouched"
 fi

@@ -7,6 +7,7 @@ import json
 from datetime import datetime
 from dotenv import load_dotenv
 
+import auth
 import auto_analyst
 import data_cleaner
 import geo_maps
@@ -382,6 +383,11 @@ def render_workspace(dict_of_dfs, key_prefix):
 
 
 # --- MAIN APP LOGIC ---
+
+# Nothing below renders until someone is signed in. require_login() draws the
+# signup / verify / login screens itself and stops the script when nobody is.
+current_user = auth.require_login()
+auth.render_account_sidebar(current_user)
 
 # The guide is its own page: opening it replaces the dashboard, so a first-time
 # user can read it without losing whatever they had loaded.

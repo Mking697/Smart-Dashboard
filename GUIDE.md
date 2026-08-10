@@ -35,6 +35,51 @@ Browser me khulega: **http://localhost:8501**
 
 ---
 
+# Part 0 — Account banao (sirf ek baar)
+
+App kholte hi **Log in** screen aayegi. Pehli baar aaye ho to account banana padega.
+
+## Signup — ek hi baar
+
+1. **`Create a new account`** dabao
+2. Bharo:
+   - **Your name** — aapka naam
+   - **Email** — asli email daalna, ispar code aayega
+   - **Password** — kam se kam **8 characters**
+   - **Confirm password** — wahi password dobara
+3. **`Create account`** dabao
+
+## Email par aaye code se verify karo
+
+Aapke email par **6 digit ka code** aayega. Wo box me daalkar
+**`Verify and continue`** dabao.
+
+| Situation | Kya karo |
+|---|---|
+| Email nahi aaya | **Spam folder** dekho — verification mails aksar wahin jaate hain |
+| 10 minute nikal gaye | Code expire ho gaya. **`Resend code`** dabao |
+| Galat code daal diya | 5 baar tak try kar sakte ho, phir naya code lena padega |
+| Email galat likh diya | **`Use a different email`** dabao |
+
+> ⏱️ Ek code bhejne ke baad agla code **60 second** baad hi bhej sakte ho.
+
+## Ab hamesha login
+
+Verify hone ke baad bas **email + password** se login karo. Signup dobara nahi karna.
+
+| Problem | Solution |
+|---|---|
+| "Email or password is incorrect" | Dono dobara check karo. Ye message dono cases me same aata hai — security ke liye |
+| "Too many failed attempts" | 5 galat koshishon ke baad account **15 minute** ke liye lock ho jata hai. Bas wait karo |
+| "This email is not verified yet" | Signup hua tha par code nahi daala. **`Enter my code`** dabao |
+
+Login hone ke baad sidebar me upar aapka naam dikhega, aur **`Log out`** ka button.
+
+> 🔒 Aapka password kabhi save nahi hota — sirf uska ek hash rakha jata hai, jisse
+> password wapas nikala nahi ja sakta.
+
+---
+
 # Part 1 — Pehli baar use karna (5 steps)
 
 ## Step 1 — Data source chuno
@@ -404,6 +449,8 @@ Sabse neeche. Apni bhasha me kuch bhi poocho, jaise:
 | Map nahi ban raha | App batayega kyun. City-level map ke liye `Latitude`/`Longitude` columns add karo, ya `🧩 Treemap Drill-Down` use karo |
 | Google Sheet nahi khul rahi | App exact wajah aur solution batata hai — private sheet ke liye service account wala rasta apnao |
 | AI kaam nahi kar raha | Sidebar me `API Connected! ✅` check karo. `.env` file me `GEMINI_API_KEY` hona chahiye |
+| Verification code nahi aaya | Spam folder dekho. Phir bhi nahi to `Resend code` dabao (60 second baad) |
+| Login nahi ho raha | 5 galat koshishon ke baad 15 minute ka lock lagta hai — wait karo |
 | Rows kam dikh rahe hain | Cleaning report kholo — wahan likha hai kaunsi rows kyun hati. Sidebar ke switches se badal sakte ho |
 | Total galat lag raha hai | `🧪 Can You Trust This Data` me duplicate rows check karo |
 
@@ -422,6 +469,7 @@ Sabse neeche. Apni bhasha me kuch bhi poocho, jaise:
 | Apni marzi ka chart | `🎛️ Manual Dashboard` → Slicers |
 | Map par dekhna | `🌍 Geographical Intelligence` |
 | AI se salah | `✨ Ask the AI what to look at` |
+| Account se nikalna | Sidebar → `Log out` |
 
 ---
 
