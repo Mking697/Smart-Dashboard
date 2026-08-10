@@ -9,6 +9,8 @@ geography and data quality.
 Every scenario carries a "why" line, so the dashboard also explains itself.
 """
 
+import re
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -29,6 +31,47 @@ DATE_HINTS = ('date', 'time', 'day', 'month', 'year', 'created', 'updated', 'tim
 
 PROFILE_SAMPLE_ROWS = 50_000
 PALETTE = px.colors.qualitative.Bold
+
+
+# --------------------------------------------------------------------------- #
+# Plain-English helpers
+# --------------------------------------------------------------------------- #
+
+def humanize(name):
+    """Turn a raw column name into something a non-technical person can read.
+
+    'Q_TaxAmount' -> 'Tax Amount', 'w_sales_rep' -> 'Sales Rep'. Real sheets are
+    full of ordering prefixes and camelCase; the dashboard should not be.
+    """
+    text = str(name).strip()
+    text = re.sub(r'^[A-Za-z]_(?=[A-Za-z])', '', text)     # drop A_ / B_ ordering prefixes
+    text = text.replace('_', ' ').replace('-', ' ')
+    text = re.sub(r'(?<=[a-z0-9])(?=[A-Z])', ' ', text)    # camelCase -> spaced
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    if not text:
+        return str(name)
+
+    return " ".join(word if word.isupper() else word[:1].upper() + word[1:] for word in text.split())
+
+
+def metric_label(metric):
+    """Readable name for a chosen metric, including the count pseudo-metric."""
+    return "Number of Records" if metric in ("Record count", "Count (Frequency)") else humanize(metric)
+
+
+def explain(text):
+    """One plain-English line under a chart telling the user how to read it."""
+    st.caption(f"📖 **How to read this:** {text}")
+
+
+def takeaway(text):
+    """The finding the chart actually shows, stated in words."""
+    st.success(f"💡 **What it means:** {text}")
+
+
+def pct(part, whole):
+    return 0.0 if not whole else round(100 * part / whole, 1)
 
 
 # --------------------------------------------------------------------------- #
@@ -81,14 +124,18 @@ def profile_column(series, name):
 
     if is_numeric:
         named_measure = any(hint in lower for hint in MEASURE_HINTS)
-        named_id = any(h == lower or lower.endswith('_' + h) or lower.startswith(h + '_')
-                       for h in IDENTIFIER_HINTS)
+        # Match on whole words of the readable name, so "D_PhoneNumber" and
+        # "H_ZipCode" are recognised as labels rather than things to total up.
+        words = {word.lower() for word in humanize(name).split()}
+        named_id = bool(words & set(IDENTIFIER_HINTS)) or any(
+            h == lower or lower.endswith('_' + h) or lower.startswith(h + '_')
+            for h in IDENTIFIER_HINTS)
         # A continuous measure is nearly all-unique by nature, so "mostly unique"
         # alone is not enough - a row id is a whole number and never a named measure.
         whole_numbers = pd.api.types.is_integer_dtype(series) or (non_null % 1 == 0).all()
         serial_like = whole_numbers and info['unique_ratio'] > 0.99 and info['n_unique'] > 20
 
-        if not named_measure and ((named_id and info['unique_ratio'] > 0.9) or serial_like):
+        if not named_measure and ((named_id and info['unique_ratio'] > 0.5) or serial_like):
             info['role'] = 'identifier'
             return info
 
@@ -178,10 +225,11 @@ def render_data_story(profiles, dataframe):
     for profile in profiles:
         label, meaning = ROLE_LABELS.get(profile['role'], ('❔ Unknown', ''))
         rows.append({
-            'Column': profile['name'],
+            'Column (as shown)': humanize(profile['name']),
+            'Original name': profile['name'],
             'Detected as': label,
             'Why it matters': meaning,
-            'Distinct': profile['n_unique'],
+            'Distinct values': profile['n_unique'],
             'Missing %': profile['missing_pct'],
         })
 
@@ -218,11 +266,12 @@ def _kpi_row(dataframe, profiles):
 
     for slot, measure in zip(tiles[1:], measures):
         total = measure.get('total', 0)
-        slot.metric(f"Σ {measure['name']}", f"{total:,.0f}", help=f"Average {measure.get('mean', 0):,.2f}")
+        slot.metric(f"Total {humanize(measure['name'])}", f"{total:,.0f}",
+                    help=f"Average per record: {measure.get('mean', 0):,.2f}")
 
     if categories:
         primary = categories[0]
-        tiles[-1].metric(f"🏷️ {primary['name']}", f"{primary['n_unique']:,}",
+        tiles[-1].metric(f"Different {humanize(primary['name'])}s", f"{primary['n_unique']:,}",
                          help=f"Most common: {primary.get('top_value', '-')}")
 
 
@@ -241,29 +290,48 @@ def scenario_executive(dataframe, profiles, key_prefix):
     dimension = categories[0]['name']
     left, right = st.columns(2)
 
+    dim_label = humanize(dimension)
+
     if measures:
         measure = measures[0]['name']
         agg = dataframe.groupby(dimension, dropna=True)[measure].sum().sort_values(ascending=False).head(12).reset_index()
-        title = f"{measure} by {dimension}"
         value_col = measure
+        value_label = humanize(measure)
     else:
         agg = dataframe[dimension].value_counts().head(12).reset_index()
         agg.columns = [dimension, 'Records']
-        title = f"Records by {dimension}"
         value_col = 'Records'
+        value_label = "Number of Records"
 
     with left:
+        st.markdown(f"##### 📊 Chart 1 — Which {dim_label} brings the most {value_label}?")
         fig = px.bar(agg, x=dimension, y=value_col, color=dimension, text_auto='.2s',
-                     title=title, color_discrete_sequence=PALETTE)
+                     title=f"{value_label} by {dim_label}", color_discrete_sequence=PALETTE,
+                     labels={dimension: dim_label, value_col: value_label})
         fig.update_layout(showlegend=False, xaxis_tickangle=-40, height=420)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"exec_bar_{key_prefix}")
+        explain(f"Each bar is one {dim_label}. Taller bar = more {value_label}. "
+                "The tallest bar on the left is your biggest contributor.")
 
     with right:
+        st.markdown(f"##### 🥧 Chart 2 — How is {value_label} split across {dim_label}?")
         fig = px.pie(agg, names=dimension, values=value_col, hole=0.45,
-                     title=f"Share of {value_col}", color_discrete_sequence=PALETTE)
+                     title=f"Share of {value_label}", color_discrete_sequence=PALETTE)
         fig.update_traces(textposition='inside', textinfo='percent+label')
         fig.update_layout(height=420)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"exec_pie_{key_prefix}")
+        explain("The whole circle is your total. Each slice shows how big that "
+                f"{dim_label}'s share is — a big slice means heavy dependence on one name.")
+
+    total = agg[value_col].sum()
+    if total:
+        leader = agg.iloc[0]
+        share = pct(leader[value_col], total)
+        takeaway(
+            f"**{leader[dimension]}** is the biggest {dim_label}, contributing "
+            f"**{leader[value_col]:,.0f}** ({share}%) of the {value_label} shown here."
+            + (f" That is more than the rest put together — a real dependency risk." if share > 50 else "")
+        )
 
 
 def scenario_trend(dataframe, profiles, key_prefix):
@@ -271,9 +339,11 @@ def scenario_trend(dataframe, profiles, key_prefix):
     dates = by_role(profiles, 'date')
     measures = rank_measures(profiles)
 
-    date_col = st.selectbox("Timeline", [p['name'] for p in dates], key=f"auto_date_{key_prefix}")
-    metric_options = ["Record count"] + [m['name'] for m in measures]
-    metric = st.selectbox("Measure", metric_options, key=f"auto_trendmetric_{key_prefix}")
+    date_col = st.selectbox("📅 Which date column?", [p['name'] for p in dates],
+                            format_func=humanize, key=f"auto_date_{key_prefix}")
+    metric_options = [m['name'] for m in measures] + ["Record count"]
+    metric = st.selectbox("📈 What do you want to track?", metric_options,
+                          format_func=metric_label, key=f"auto_trendmetric_{key_prefix}")
 
     frame = dataframe[[date_col] + ([metric] if metric != "Record count" else [])].copy()
     frame[date_col] = parse_dates(frame[date_col])
@@ -294,10 +364,17 @@ def scenario_trend(dataframe, profiles, key_prefix):
 
     series = series[series['Value'].notna()]
 
+    label = metric_label(metric)
+    st.markdown(f"##### 📈 Chart — How has {label} changed over time?")
+
     fig = px.area(series, x=date_col, y='Value', markers=True,
-                  title=f"{freq_label} trend of {metric}", color_discrete_sequence=['#2563eb'])
+                  title=f"{label} over time ({freq_label.lower()})",
+                  color_discrete_sequence=['#2563eb'],
+                  labels={'Value': label, date_col: humanize(date_col)})
     fig.update_layout(height=420, hovermode='x unified')
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"trend_area_{key_prefix}")
+    explain(f"Time runs left to right. The line going up means {label} is growing, "
+            "going down means it is falling. Hover any point to see that period's exact number.")
 
     if len(series) >= 2:
         latest, previous = series['Value'].iloc[-1], series['Value'].iloc[-2]
@@ -305,9 +382,16 @@ def scenario_trend(dataframe, profiles, key_prefix):
         peak = series.loc[series['Value'].idxmax()]
 
         col1, col2, col3 = st.columns(3)
-        col1.metric(f"Latest {freq_label.lower()} period", f"{latest:,.0f}", f"{change:+.1f}%")
-        col2.metric("Peak period", f"{peak['Value']:,.0f}", help=str(peak[date_col].date()))
-        col3.metric("Period average", f"{series['Value'].mean():,.0f}")
+        col1.metric("Latest period", f"{latest:,.0f}", f"{change:+.1f}% vs previous")
+        col2.metric("Best period ever", f"{peak['Value']:,.0f}", help=str(peak[date_col].date()))
+        col3.metric("Typical period", f"{series['Value'].mean():,.0f}")
+
+        direction = "up" if change > 0 else ("down" if change < 0 else "flat")
+        takeaway(
+            f"The most recent period recorded **{latest:,.0f}** {label}, which is "
+            f"**{abs(change):.1f}% {direction}** compared with the period before it. "
+            f"The best period so far was **{peak[date_col].date()}** with {peak['Value']:,.0f}."
+        )
 
 
 def scenario_ranking(dataframe, profiles, key_prefix):
@@ -315,9 +399,11 @@ def scenario_ranking(dataframe, profiles, key_prefix):
     categories = rank_categories(profiles)
     measures = rank_measures(profiles)
 
-    dimension = st.selectbox("Rank by", [c['name'] for c in categories], key=f"auto_rankdim_{key_prefix}")
-    metric_options = ["Record count"] + [m['name'] for m in measures]
-    metric = st.selectbox("Measure", metric_options, key=f"auto_rankmetric_{key_prefix}")
+    dimension = st.selectbox("🏷️ Rank which group?", [c['name'] for c in categories],
+                             format_func=humanize, key=f"auto_rankdim_{key_prefix}")
+    metric_options = [m['name'] for m in measures] + ["Record count"]
+    metric = st.selectbox("📊 Rank them by what?", metric_options,
+                          format_func=metric_label, key=f"auto_rankmetric_{key_prefix}")
 
     if metric == "Record count":
         agg = dataframe[dimension].value_counts().reset_index()
@@ -335,35 +421,50 @@ def scenario_ranking(dataframe, profiles, key_prefix):
 
     left, right = st.columns([3, 2])
 
+    dim_label, value_label = humanize(dimension), metric_label(metric)
+
     with left:
+        st.markdown(f"##### 🏆 Chart 1 — Your top {dim_label}s by {value_label}")
         top = agg.head(15).sort_values('Value')
         fig = px.bar(top, x='Value', y=dimension, orientation='h', text_auto='.2s',
-                     title=f"Top {len(top)} by {metric}", color='Value',
-                     color_continuous_scale='Blues')
+                     title=f"Top {len(top)} {dim_label}s by {value_label}", color='Value',
+                     color_continuous_scale='Blues',
+                     labels={'Value': value_label, dimension: dim_label})
         fig.update_layout(height=460, coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"rank_bar_{key_prefix}")
+        explain("The longest bar at the top is your best performer. "
+                "Bars are sorted, so you read this list from top to bottom.")
 
     with right:
+        st.markdown("##### 📉 Chart 2 — Do a few names carry the business?")
         pareto = agg.head(30).reset_index(drop=True)
         fig = px.line(pareto, x=pareto.index + 1, y='Cumulative %', markers=True,
-                      title="Concentration (Pareto)", color_discrete_sequence=['#dc2626'])
-        fig.add_hline(y=80, line_dash="dash", line_color="#94a3b8")
-        fig.update_layout(height=460, xaxis_title=f"Number of {dimension} values")
-        st.plotly_chart(fig, use_container_width=True)
+                      title="Running total share (Pareto)", color_discrete_sequence=['#dc2626'])
+        fig.add_hline(y=80, line_dash="dash", line_color="#94a3b8",
+                      annotation_text="80% of the total", annotation_position="bottom right")
+        fig.update_layout(height=460, xaxis_title=f"Number of {dim_label}s (best first)",
+                          yaxis_title="% of total covered")
+        st.plotly_chart(fig, use_container_width=True, key=f"rank_pareto_{key_prefix}")
+        explain("Start at the left and add up your best performers one by one. "
+                "Where the line crosses the dashed 80% mark tells you how few names "
+                "make up most of the business.")
 
     needed = int((agg['Cumulative %'] < 80).sum()) + 1
-    share = round(100 * needed / len(agg), 1)
-    st.success(
-        f"💡 **{needed} of {len(agg)}** {dimension} values ({share}%) make up 80% of {metric}. "
-        + ("Highly concentrated — a few names carry the business."
-           if share <= 30 else "Fairly evenly spread across the base.")
+    share = pct(needed, len(agg))
+    takeaway(
+        f"Just **{needed} out of {len(agg)}** {dim_label}s ({share}% of them) generate **80% of "
+        f"all {value_label}**. "
+        + ("That is heavy concentration — losing one of these would hurt badly, so protect them."
+           if share <= 30 else
+           "That is fairly evenly spread, so no single name is critical to the business.")
     )
 
 
 def scenario_distribution(dataframe, profiles, key_prefix):
     """Shape of each measure, plus the outliers hiding in it."""
     measures = rank_measures(profiles)
-    metric = st.selectbox("Measure", [m['name'] for m in measures], key=f"auto_dist_{key_prefix}")
+    metric = st.selectbox("🔢 Which number do you want to examine?", [m['name'] for m in measures],
+                          format_func=humanize, key=f"auto_dist_{key_prefix}")
 
     values = pd.to_numeric(dataframe[metric], errors='coerce').dropna()
     if values.empty:
@@ -372,17 +473,26 @@ def scenario_distribution(dataframe, profiles, key_prefix):
 
     left, right = st.columns([3, 2])
 
+    label = humanize(metric)
+
     with left:
-        fig = px.histogram(values, nbins=40, title=f"Distribution of {metric}",
+        st.markdown(f"##### 📊 Chart 1 — What is a normal {label}?")
+        fig = px.histogram(values, nbins=40, title=f"How {label} values are spread",
                            color_discrete_sequence=['#2563eb'])
-        fig.update_layout(height=400, showlegend=False, xaxis_title=metric)
-        st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(height=400, showlegend=False, xaxis_title=label,
+                          yaxis_title="How many records")
+        st.plotly_chart(fig, use_container_width=True, key=f"dist_hist_{key_prefix}")
+        explain(f"Each bar counts how many records fall in that {label} range. The tallest "
+                "bar is your most common value - that is what normal looks like.")
 
     with right:
-        fig = px.box(values, title=f"Spread & outliers: {metric}",
+        st.markdown(f"##### 📦 Chart 2 — Any unusual {label} values?")
+        fig = px.box(values, title=f"Typical range and odd values in {label}",
                      color_discrete_sequence=['#0ea5e9'])
-        fig.update_layout(height=400, showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(height=400, showlegend=False, yaxis_title=label)
+        st.plotly_chart(fig, use_container_width=True, key=f"dist_box_{key_prefix}")
+        explain("The box holds the middle half of your records. Dots sitting far away from "
+                "the box are unusual values worth checking.")
 
     q1, q3 = values.quantile(0.25), values.quantile(0.75)
     iqr = q3 - q1
@@ -390,15 +500,26 @@ def scenario_distribution(dataframe, profiles, key_prefix):
     outliers = values[(values < low) | (values > high)]
 
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Median", f"{values.median():,.2f}")
+    col1.metric("Middle value", f"{values.median():,.2f}",
+                help="Half the records are above this, half below")
     col2.metric("Average", f"{values.mean():,.2f}")
-    col3.metric("Std deviation", f"{values.std():,.2f}")
-    col4.metric("Outliers", f"{len(outliers):,}", help=f"Outside {low:,.2f} – {high:,.2f}")
+    col3.metric("Highest", f"{values.max():,.2f}")
+    col4.metric("Unusual values", f"{len(outliers):,}",
+                help=f"Outside the normal range {low:,.2f} to {high:,.2f}")
+
+    skewed = abs(values.mean() - values.median()) > 0.3 * (values.std() or 1)
+    takeaway(
+        f"A typical {label} is around **{values.median():,.2f}**, and most records sit between "
+        f"**{low:,.2f}** and **{high:,.2f}**."
+        + (" The average is well above the middle value, so a few very large records are "
+           "pulling it up - averages will mislead you here." if skewed else "")
+    )
 
     if len(outliers):
         st.warning(
-            f"⚠️ {len(outliers):,} record(s) ({100 * len(outliers) / len(values):.1f}%) sit far outside the "
-            f"normal range of {metric}. Worth checking whether these are genuine extremes or data-entry errors."
+            f"⚠️ **{len(outliers):,} record(s)** ({pct(len(outliers), len(values))}%) fall far outside "
+            f"that range for {label}. Check whether these are genuine big deals or typing mistakes - "
+            "they distort every total on this dashboard."
         )
 
 
@@ -410,12 +531,18 @@ def scenario_relationships(dataframe, profiles, key_prefix):
 
     left, right = st.columns([2, 3])
 
+    readable = correlation.rename(index=humanize, columns=humanize)
+
     with left:
-        fig = px.imshow(correlation, text_auto='.2f', aspect='auto',
+        st.markdown("##### 🔗 Chart 1 — Which numbers move together?")
+        fig = px.imshow(readable, text_auto='.2f', aspect='auto',
                         color_continuous_scale='RdBu_r', zmin=-1, zmax=1,
-                        title="Correlation matrix")
+                        title="Relationship strength between your numbers")
         fig.update_layout(height=430)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"corr_heatmap_{key_prefix}")
+        explain("Find where a row and a column meet. A score near **+1** (red) means the two "
+                "rise together, near **-1** (blue) means one falls as the other rises, and "
+                "near **0** means they are unrelated.")
 
     pairs = []
     for i, first in enumerate(measures):
@@ -432,18 +559,32 @@ def scenario_relationships(dataframe, profiles, key_prefix):
     pairs.sort(key=lambda item: abs(item[2]), reverse=True)
     first, second, strength = pairs[0]
 
+    first_label, second_label = humanize(first), humanize(second)
+
     with right:
+        st.markdown(f"##### 🎯 Chart 2 — {first_label} vs {second_label}")
         colour_by = rank_categories(profiles)
         colour = colour_by[0]['name'] if colour_by else None
+        labels = {first: first_label, second: second_label}
+        if colour:
+            labels[colour] = humanize(colour)
         fig = px.scatter(dataframe, x=first, y=second, color=colour, trendline=None,
-                         title=f"{first} vs {second} (r = {strength:.2f})",
-                         color_discrete_sequence=PALETTE, opacity=0.7)
+                         title=f"{first_label} compared with {second_label}",
+                         color_discrete_sequence=PALETTE, opacity=0.7, labels=labels)
         fig.update_layout(height=430)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"corr_scatter_{key_prefix}")
+        explain("Every dot is one record. If the dots line up going upward the two numbers "
+                "grow together; a shapeless cloud means they have little to do with each other.")
 
-    direction = "rise together" if strength > 0 else "move in opposite directions"
+    direction = ("when one goes up the other goes up too" if strength > 0
+                 else "when one goes up the other tends to go down")
     grade = "strong" if abs(strength) >= 0.7 else ("moderate" if abs(strength) >= 0.4 else "weak")
-    st.info(f"🔗 Strongest link: **{first}** and **{second}** — a {grade} relationship (r = {strength:.2f}); they {direction}.")
+    takeaway(
+        f"The closest link in your data is between **{first_label}** and **{second_label}** - "
+        f"a {grade} relationship, meaning {direction}."
+        + (" Strong enough to plan around." if abs(strength) >= 0.7
+           else " Too weak to base decisions on." if abs(strength) < 0.4 else "")
+    )
 
 
 def scenario_crosstab(dataframe, profiles, key_prefix):
@@ -453,13 +594,15 @@ def scenario_crosstab(dataframe, profiles, key_prefix):
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        rows = st.selectbox("Rows", categories, key=f"auto_ctrow_{key_prefix}")
+        rows = st.selectbox("↕️ Down the side", categories, format_func=humanize,
+                            key=f"auto_ctrow_{key_prefix}")
     with col2:
         remaining = [c for c in categories if c != rows]
-        cols = st.selectbox("Columns", remaining, key=f"auto_ctcol_{key_prefix}")
+        cols = st.selectbox("↔️ Across the top", remaining, format_func=humanize,
+                            key=f"auto_ctcol_{key_prefix}")
     with col3:
-        metric = st.selectbox("Cell value", ["Record count"] + [m['name'] for m in measures],
-                              key=f"auto_ctmetric_{key_prefix}")
+        metric = st.selectbox("🔢 Show me", [m['name'] for m in measures] + ["Record count"],
+                              format_func=metric_label, key=f"auto_ctmetric_{key_prefix}")
 
     if metric == "Record count":
         matrix = pd.crosstab(dataframe[rows], dataframe[cols])
@@ -470,21 +613,32 @@ def scenario_crosstab(dataframe, profiles, key_prefix):
     matrix = matrix.loc[matrix.sum(axis=1).sort_values(ascending=False).index[:20],
                         matrix.sum(axis=0).sort_values(ascending=False).index[:20]]
 
+    row_label, col_label, value_label = humanize(rows), humanize(cols), metric_label(metric)
+    st.markdown(f"##### 🔥 Chart — Where does {value_label} pile up across {row_label} and {col_label}?")
+
     fig = px.imshow(matrix, text_auto='.3s', aspect='auto', color_continuous_scale='Blues',
-                    title=f"{metric}: {rows} × {cols}")
+                    title=f"{value_label} by {row_label} and {col_label}",
+                    labels=dict(x=col_label, y=row_label, color=value_label))
     fig.update_layout(height=520)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"crosstab_heatmap_{key_prefix}")
+    explain(f"Every square is one {row_label} combined with one {col_label}. "
+            "Darker squares hold more - the darkest square is your busiest combination, "
+            "and empty pale areas are gaps you are not serving.")
 
     if matrix.size:
         flat = matrix.stack()
         peak_row, peak_col = flat.idxmax()
-        st.success(f"🎯 Hotspot: **{peak_row} × {peak_col}** with {flat.max():,.0f}.")
+        takeaway(
+            f"Your strongest combination is **{peak_row}** with **{peak_col}**, "
+            f"reaching **{flat.max():,.0f}** {value_label}. "
+            f"That is {pct(flat.max(), flat.sum())}% of everything shown in this grid."
+        )
 
 
 def scenario_quality(dataframe, profiles, key_prefix):
     """Can these numbers be trusted? Missing data, duplicates, dead columns."""
     missing = pd.DataFrame({
-        'Column': [p['name'] for p in profiles],
+        'Column': [humanize(p['name']) for p in profiles],
         'Missing %': [p['missing_pct'] for p in profiles],
         'Distinct': [p['n_unique'] for p in profiles],
     }).sort_values('Missing %', ascending=False)
@@ -495,38 +649,51 @@ def scenario_quality(dataframe, profiles, key_prefix):
     complete = float((1 - dataframe.isna().sum().sum() / max(dataframe.size, 1)) * 100)
 
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Completeness", f"{complete:.1f}%")
-    col2.metric("Duplicate rows", f"{duplicates:,}")
-    col3.metric("Constant columns", len(constants))
-    col4.metric("Empty columns", len(empties))
+    col1.metric("How complete", f"{complete:.1f}%", help="Share of all cells that actually have a value")
+    col2.metric("Repeated rows", f"{duplicates:,}")
+    col3.metric("Useless columns", len(constants), help="Same value in every row")
+    col4.metric("Blank columns", len(empties))
 
+    st.markdown("##### 🧪 Chart — Which columns have gaps in them?")
     fig = px.bar(missing.head(20), x='Missing %', y='Column', orientation='h',
-                 title="Missing data by column", color='Missing %',
-                 color_continuous_scale='Reds')
+                 title="Percentage of missing values, by column", color='Missing %',
+                 color_continuous_scale='Reds', labels={'Column': 'Column'})
     fig.update_layout(height=460, coloraxis_showscale=False)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"quality_missing_{key_prefix}")
+    explain("A longer red bar means more blank cells in that column. Anything past roughly "
+            "20% is risky - charts built on it are only telling part of the story.")
 
     notes = []
     worst = missing.iloc[0]
     if worst['Missing %'] > 20:
-        notes.append(f"**{worst['Column']}** is {worst['Missing %']}% empty — treat any chart built on it with care.")
+        notes.append(f"**{worst['Column']}** is {worst['Missing %']}% empty - any chart built on it "
+                     "is missing a big chunk of reality.")
     if duplicates:
-        notes.append(f"**{duplicates:,}** fully duplicated row(s) — totals may be inflated.")
+        notes.append(f"**{duplicates:,}** row(s) appear more than once - your totals are counting "
+                     "the same thing twice.")
     if constants:
-        notes.append(f"Constant column(s) with a single value: {', '.join(constants[:5])} — they add no information.")
+        names = ', '.join(humanize(c) for c in constants[:5])
+        notes.append(f"These columns hold the same value in every row and tell you nothing: {names}.")
 
     for note in notes:
         st.warning("⚠️ " + note)
-    if not notes:
-        st.success("✅ No structural data quality problems detected.")
+
+    if notes:
+        st.caption("👉 Fix these in the source sheet, then sync again - every number above improves.")
+    else:
+        takeaway("Your data is clean - no duplicate rows, no dead columns and very few gaps. "
+                 "You can trust the numbers on the other tabs.")
 
 
 def scenario_geography(dataframe, profiles, key_prefix):
     """Maps, driven by whichever geography column the data carries."""
     categories = dataframe.select_dtypes(include=['object', 'category', 'string']).columns.tolist()
     measures = rank_measures(profiles)
-    metric = st.selectbox("Map metric", ["Count (Frequency)"] + [m['name'] for m in measures],
-                          key=f"auto_geometric_{key_prefix}")
+    metric = st.selectbox("🗺️ What should the map show?",
+                          [m['name'] for m in measures] + ["Count (Frequency)"],
+                          format_func=metric_label, key=f"auto_geometric_{key_prefix}")
+    explain("Darker areas and bigger pins mean higher numbers. Hover any place to see its "
+            "exact value, and scroll to zoom in.")
     geo_maps.render_geo_section(dataframe, categories, metric, f"auto_{key_prefix}")
 
 
@@ -542,56 +709,70 @@ def build_scenarios(dataframe, profiles):
     geos = by_role(profiles, 'geo')
 
     scenarios = [{
-        'title': "📊 Executive Summary",
-        'why': "The headline numbers, and the one breakdown that explains most of them.",
+        'title': "📊 Business Overview",
+        'why': "Your headline numbers and who is driving them. Start here.",
+        'question': "How is the business doing overall, and who contributes most?",
         'render': scenario_executive,
     }]
 
     if dates:
         scenarios.append({
-            'title': "📈 Trends",
-            'why': f"'{dates[0]['name']}' is a real timeline, so movement over time and growth can be measured.",
+            'title': "📈 Growth Over Time",
+            'why': f"Your sheet has real dates in '{humanize(dates[0]['name'])}', so we can track "
+                   "whether things are improving or slipping.",
+            'question': "Are we growing, flat, or falling - and when were our best periods?",
             'render': scenario_trend,
         })
 
     if categories:
         scenarios.append({
-            'title': "🏆 Rankings & 80/20",
-            'why': "Dimensions with a workable number of buckets — worth ranking and testing for concentration.",
+            'title': "🏆 Top Performers",
+            'why': "Your data has groups worth comparing, so we ranked them and checked how much "
+                   "of the business the top few actually carry.",
+            'question': "Who are our best performers, and how dependent are we on them?",
             'render': scenario_ranking,
         })
 
     if measures:
         scenarios.append({
-            'title': "📉 Distribution & Outliers",
-            'why': "Numeric measures found — their spread reveals typical values and suspicious extremes.",
+            'title': "📉 What Is Normal",
+            'why': "You have numbers we can measure, so we worked out what a typical value looks "
+                   "like and flagged anything strange.",
+            'question': "What is a normal value here, and which records look wrong?",
             'render': scenario_distribution,
         })
 
     if len(measures) >= 2:
         scenarios.append({
-            'title': "🔗 Relationships",
-            'why': f"{len(measures)} measures present, so they can be tested for correlation.",
+            'title': "🔗 What Affects What",
+            'why': f"You have {len(measures)} numbers, so we tested every pair to see which ones "
+                   "move together.",
+            'question': "When one number changes, which other numbers change with it?",
             'render': scenario_relationships,
         })
 
     if len(categories) >= 2:
         scenarios.append({
-            'title': "🧮 Cross-Tab Heatmap",
-            'why': "Two or more dimensions — combining them shows where volume concentrates.",
+            'title': "🧮 Best Combinations",
+            'why': "With two or more groups in your data, combining them reveals pockets that a "
+                   "single chart hides.",
+            'question': "Which combination of groups is performing best, and where are the gaps?",
             'render': scenario_crosstab,
         })
 
     if geos:
         scenarios.append({
-            'title': "🌍 Geography",
-            'why': f"'{geos[0]['name']}' resolves to real places, so it can be mapped.",
+            'title': "🌍 Location Map",
+            'why': f"'{humanize(geos[0]['name'])}' contains real places, so your data can be "
+                   "drawn on a map.",
+            'question': "Which places bring the most business, and where are we absent?",
             'render': scenario_geography,
         })
 
     scenarios.append({
-        'title': "🧪 Data Quality",
-        'why': "Every number above is only as good as the data underneath it.",
+        'title': "🧪 Can You Trust This Data",
+        'why': "Every number on the other tabs is only as good as the sheet underneath it.",
+        'question': "Are there gaps, duplicates or dead columns that make these charts unreliable?",
         'render': scenario_quality,
     })
 
@@ -634,16 +815,22 @@ def render_auto_dashboard(dataframe, key_prefix, ai_callback=None):
     render_data_story(profiles, dataframe)
 
     scenarios = build_scenarios(dataframe, profiles)
-    st.write(f"### 🤖 {len(scenarios)} dashboards built automatically from this data")
+
+    st.write(f"### 📑 {len(scenarios)} ready-made reports from your sheet")
+    st.caption("Open any tab below. Each report answers one business question, and every chart "
+               "comes with a plain-English explanation of what it shows and what it means.")
 
     tabs = st.tabs([scenario['title'] for scenario in scenarios])
     for tab, scenario in zip(tabs, scenarios):
         with tab:
-            st.caption(f"🧠 Why this view: {scenario['why']}")
+            question = scenario.get('question')
+            if question:
+                st.markdown(f"#### ❓ {question}")
+            st.caption(f"🧠 Why this report was built: {scenario['why']}")
             try:
                 scenario['render'](dataframe, profiles, key_prefix)
             except Exception as error:
-                st.warning(f"This view could not be built for the current data ({error}).")
+                st.warning(f"This report could not be built for the current data ({error}).")
 
     if ai_callback:
         st.divider()

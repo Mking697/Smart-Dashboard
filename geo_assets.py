@@ -45,6 +45,37 @@ STATE_ALIASES = {
     "telengana": "Telangana",
 }
 
+# Official 2-letter state codes. Real sheets are full of these ("MH", "DL", "KA").
+# Note: in a *state* column "UK" means Uttarakhand, not the United Kingdom.
+STATE_CODES = {
+    "an": "Andaman and Nicobar Islands", "ap": "Andhra Pradesh",
+    "ar": "Arunachal Pradesh", "as": "Assam", "br": "Bihar", "ch": "Chandigarh",
+    "cg": "Chhattisgarh", "ct": "Chhattisgarh",
+    "dn": "Dadra and Nagar Haveli and Daman and Diu",
+    "dd": "Dadra and Nagar Haveli and Daman and Diu", "dl": "Delhi",
+    "ga": "Goa", "gj": "Gujarat", "hr": "Haryana", "hp": "Himachal Pradesh",
+    "jk": "Jammu and Kashmir", "jh": "Jharkhand", "ka": "Karnataka",
+    "kl": "Kerala", "la": "Ladakh", "ld": "Lakshadweep", "mp": "Madhya Pradesh",
+    "mh": "Maharashtra", "mn": "Manipur", "ml": "Meghalaya", "mz": "Mizoram",
+    "nl": "Nagaland", "or": "Odisha", "od": "Odisha", "py": "Puducherry",
+    "pb": "Punjab", "rj": "Rajasthan", "sk": "Sikkim", "tn": "Tamil Nadu",
+    "ts": "Telangana", "tg": "Telangana", "tr": "Tripura", "up": "Uttar Pradesh",
+    "uk": "Uttarakhand", "ut": "Uttarakhand", "wb": "West Bengal",
+}
+
+# Airport / IATA codes get used as city shorthand all the time in sales data.
+CITY_CODES = {
+    "del": "delhi", "bom": "mumbai", "blr": "bengaluru urban", "maa": "chennai",
+    "ccu": "kolkata", "hyd": "hyderabad", "pnq": "pune", "amd": "ahmedabad",
+    "lko": "lucknow", "jai": "jaipur", "goi": "north goa", "cok": "ernakulam",
+    "ixc": "chandigarh", "pat": "patna", "ixr": "ranchi", "bho": "bhopal",
+    "idr": "indore", "nag": "nagpur", "vns": "varanasi", "trv": "thiruvananthapuram",
+    "gau": "kamrup metropolitan", "sxr": "srinagar", "ixj": "jammu",
+    "atq": "amritsar", "stv": "surat", "vtz": "visakhapatnam", "cjb": "coimbatore",
+    "ixm": "madurai", "rpr": "raipur", "jdh": "jodhpur", "udr": "udaipur",
+    "ded": "dehradun", "knu": "kanpur nagar", "ixz": "nicobars",
+}
+
 # Popular city names that differ from the official district name in the GeoJSON.
 CITY_ALIASES = {
     "bangalore": "bengaluru urban",
@@ -228,8 +259,20 @@ def district_lookup():
 
 
 def match_state(value):
-    """Official Indian state/UT name for a raw label, or None."""
-    return state_lookup().get(norm_key(value))
+    """Official Indian state/UT name for a raw label, or None.
+
+    Accepts full names, common misspellings and the 2-letter codes ("MH", "DL")
+    that real spreadsheets are full of.
+    """
+    key = norm_key(value)
+    if not key:
+        return None
+
+    hit = state_lookup().get(key)
+    if hit:
+        return hit
+
+    return STATE_CODES.get(key.replace(" ", ""))
 
 
 def match_district(value):
@@ -244,7 +287,7 @@ def match_district(value):
     if key in lookup:
         return lookup[key][0]
 
-    alias = CITY_ALIASES.get(key)
+    alias = CITY_ALIASES.get(key) or CITY_CODES.get(key.replace(" ", ""))
     if alias and alias in lookup:
         return lookup[alias][0]
 

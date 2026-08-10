@@ -22,6 +22,10 @@ if API_KEY:
 # Page Configuration
 st.set_page_config(page_title="AI Smart Dashboard", layout="wide", page_icon="📊")
 
+# A column this numeric is treated as a number column, junk values become blanks.
+NUMERIC_COERCE_THRESHOLD = 0.8
+
+
 # --- UPDATED SMART DATA CLEANING FUNCTION ---
 def auto_fix_headers(df):
     unnamed_cols = [col for col in df.columns if "Unnamed" in str(col)]
@@ -56,8 +60,16 @@ def auto_fix_headers(df):
         try:
             df[col] = pd.to_numeric(df[col])
         except:
-            pass
-            
+            # Real sheets slip a stray date or note into an otherwise numeric
+            # column. All-or-nothing conversion leaves the whole column as text,
+            # which silently drops it from every chart - so if the column is
+            # mostly numbers, keep the numbers and null out the junk.
+            non_null = df[col].dropna()
+            if len(non_null):
+                coerced = pd.to_numeric(df[col], errors='coerce')
+                if coerced.notna().sum() / len(non_null) >= NUMERIC_COERCE_THRESHOLD:
+                    df[col] = coerced
+
     return df
 
 # --- HELPER FUNCTION: POWER BI STYLE DYNAMIC DASHBOARD ---
@@ -104,12 +116,12 @@ def generate_dashboard(dataframe, key_prefix, is_compare_mode=False):
             fig1 = px.bar(chart_data, x=x_axis, y=y_axis, title=f"Sum of {y_axis} by {x_axis}", color=x_axis, text_auto=True)
         
         fig1.update_layout(xaxis_tickangle=-45, showlegend=False)
-        st.plotly_chart(fig1, use_container_width=True)
+        st.plotly_chart(fig1, use_container_width=True, key=f"mainbar_{key_prefix}")
         
     with chart2:
         fig2 = px.pie(dataframe, names=x_axis, title=f"Market Share: {x_axis}", hole=0.4)
         fig2.update_traces(textposition='inside', textinfo='percent+label')
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, use_container_width=True, key=f"mainpie_{key_prefix}")
         
     # --- SMART GEOGRAPHICAL MAP LOGIC (see geo_maps.py) ---
     geo_maps.render_geo_section(dataframe, cat_cols, y_axis, key_prefix)

@@ -66,6 +66,20 @@ PULSE_CSS = """
 # Detection
 # --------------------------------------------------------------------------- #
 
+# Real sheets mix pin codes, SKUs and stray notes into location columns, so a
+# hinted column only needs a minority of its labels to resolve before we map it.
+HINTED_THRESHOLD = 0.3
+UNHINTED_THRESHOLD = 0.6
+
+
+def _candidate_labels(labels):
+    """Distinct text labels worth testing - numbers and blanks are never places."""
+    values = pd.Series(labels).dropna().astype(str).str.strip()
+    values = values[(values != '') & (values.str.lower() != 'nan')]
+    values = values[~values.str.fullmatch(r'[\d\.\-\s]+')]  # pin codes, phone numbers
+    return pd.Series(values.unique())
+
+
 def _ratio(labels, matcher):
     """Share of labels a matcher can resolve."""
     if len(labels) == 0:
@@ -79,10 +93,7 @@ def detect_map_mode(labels, column_name):
     Returns one of 'country', 'india-states', 'india-districts', 'usa-states',
     or None when nothing built-in can place these values.
     """
-    values = pd.Series(labels).dropna().astype(str).str.strip()
-    values = values[(values != '') & (values.str.lower() != 'nan')]
-    values = pd.Series(values.unique())
-
+    values = _candidate_labels(labels)
     if values.empty:
         return None
 
@@ -97,16 +108,17 @@ def detect_map_mode(labels, column_name):
     is_indian_city = _ratio(values, geo.match_district)
 
     # The column name is the strongest signal - trust it before guessing.
-    if any(hint in name for hint in COUNTRY_HINTS) and is_country > 0.5:
+    if any(hint in name for hint in COUNTRY_HINTS) and is_country >= HINTED_THRESHOLD:
         return 'country'
 
     if any(hint in name for hint in STATE_HINTS):
-        if is_indian_state > 0.5:
+        # Indian state codes and US state codes overlap, so pick the better fit.
+        if is_indian_state >= HINTED_THRESHOLD and is_indian_state >= is_us_state:
             return 'india-states'
-        if is_us_state > 0.5:
+        if is_us_state >= HINTED_THRESHOLD:
             return 'usa-states'
 
-    if any(hint in name for hint in CITY_HINTS) and is_indian_city > 0.5:
+    if any(hint in name for hint in CITY_HINTS) and is_indian_city >= HINTED_THRESHOLD:
         return 'india-districts'
 
     # No usable hint in the name: go with whatever matches best.
@@ -117,7 +129,7 @@ def detect_map_mode(labels, column_name):
         'india-districts': is_indian_city,
     }
     best = max(scores, key=scores.get)
-    return best if scores[best] > 0.6 else None
+    return best if scores[best] >= UNHINTED_THRESHOLD else None
 
 
 def to_map_codes(labels, mode):
@@ -178,6 +190,9 @@ def aggregate_by_place(dataframe, place_col, y_axis):
     if y_axis == "Count (Frequency)":
         return frame.groupby(place_col).size().reset_index(name='Value'), "Records"
 
+    # Never trust the dtype: a stray note in a numeric column would otherwise
+    # crash the sum, or make Plotly colour the map as if it were a category.
+    frame[y_axis] = pd.to_numeric(frame[y_axis], errors='coerce')
     frame = frame[frame[y_axis].notna()]
     if frame.empty:
         return None, None
@@ -210,7 +225,7 @@ def map_controls(key_prefix, allow_blink=False):
     return zoom, projection, blink
 
 
-def style_and_render(fig, zoom, metric_label, height=580):
+def style_and_render(fig, zoom, metric_label, key, height=580):
     """Apply the shared basemap look, then render with scroll-zoom enabled."""
     if zoom == "🎯 Auto Fit":
         fig.update_geos(fitbounds="locations")
@@ -229,7 +244,7 @@ def style_and_render(fig, zoom, metric_label, height=580):
         margin=dict(l=0, r=0, t=60, b=0),
         coloraxis_colorbar=dict(title=metric_label),
     )
-    st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
+    st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True}, key=key)
 
 
 def _leaderboard(agg, label_col, metric_label, top_n=5):
@@ -260,6 +275,7 @@ def render_region_map(dataframe, place_col, y_axis, mode, key_prefix):
     # Different spellings of the same place (India / IND / IN) collapse here, so
     # one region is never counted two or three times.
     merged = agg.groupby('Map_Code', as_index=False)['Value'].sum()
+    merged['Value'] = pd.to_numeric(merged['Value'], errors='coerce').fillna(0)
 
     if mode == 'country':
         merged['Label'] = merged['Map_Code'].map(geo.country_display_name)
@@ -287,7 +303,7 @@ def render_region_map(dataframe, place_col, y_axis, mode, key_prefix):
         st.warning("Boundary data for this map is unavailable.")
         return
 
-    style_and_render(fig, zoom, metric_label)
+    style_and_render(fig, zoom, metric_label, key=f"regionmap_{key_prefix}")
     _leaderboard(merged, 'Label', metric_label)
 
     if len(agg) != len(merged):
@@ -465,7 +481,7 @@ def render_pin_map(dataframe, place_col, y_axis, key_prefix, lat_col=None, lon_c
         coloraxis=dict(colorscale='Blues', cmin=float(points['Value'].min()), cmax=float(points['Value'].max())),
     )
 
-    style_and_render(fig, zoom, metric_label)
+    style_and_render(fig, zoom, metric_label, key=f"pinmap_{key_prefix}")
 
     st.caption(
         f"📌 {len(points):,} location(s) plotted from {source_note}. "
@@ -538,10 +554,10 @@ def render_geo_section(dataframe, cat_cols, y_axis, key_prefix):
 
     else:
         st.info("💡 Click on any region/block to zoom in and see the drill-down details.")
-        render_treemap(dataframe, hierarchy[:4])
+        render_treemap(dataframe, hierarchy[:4], key_prefix)
 
 
-def render_treemap(dataframe, path_cols):
+def render_treemap(dataframe, path_cols, key_prefix):
     """The original hierarchical drill-down, kept intact."""
     df_map = dataframe.copy()
     df_map[path_cols] = df_map[path_cols].fillna('Unknown')
@@ -553,6 +569,6 @@ def render_treemap(dataframe, path_cols):
     try:
         fig = px.treemap(df_map, path=path_cols,
                          title=f"Geographical Drill-Down: {' ➡️ '.join(path_cols)}")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"treemap_{key_prefix}")
     except Exception:
         st.warning("Map generation skipped due to unsupported data structure in location columns.")
