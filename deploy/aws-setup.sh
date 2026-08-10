@@ -18,6 +18,37 @@ SWAP_FILE="/swapfile"
 SWAP_SIZE="2G"
 
 say() { printf "\n\033[1;34m==>\033[0m %s\n" "$1"; }
+die() { printf "\n\033[1;31mSTOPPED:\033[0m %s\n" "$1" >&2; exit 1; }
+
+# --------------------------------------------------------------------------- #
+# This script claims port 80 and replaces Nginx's enabled sites. On an instance
+# that is already serving something, that would take the other project offline -
+# so refuse to run rather than break it.
+say "0/7  Safety check"
+
+if [ -d /etc/nginx/sites-enabled ]; then
+    OTHER_SITES="$(find /etc/nginx/sites-enabled -maxdepth 1 -type l -o -maxdepth 1 -type f \
+        | xargs -r -n1 basename \
+        | grep -v -x -e default -e dashboard || true)"
+    if [ -n "$OTHER_SITES" ]; then
+        die "This instance already serves other Nginx sites:
+    $(echo "$OTHER_SITES" | tr '\n' ' ')
+
+  This script takes over port 80 and would knock them offline.
+  Launch a separate EC2 instance for the dashboard and run it there."
+    fi
+fi
+
+for PORT_IN_USE in 80 8501; do
+    if command -v ss >/dev/null && ss -ltn "sport = :$PORT_IN_USE" 2>/dev/null | grep -q LISTEN; then
+        if [ "$PORT_IN_USE" = 80 ] && ! systemctl is-active --quiet nginx; then
+            die "Something other than Nginx is already listening on port $PORT_IN_USE.
+  Use a fresh instance so the running project is not disturbed."
+        fi
+    fi
+done
+
+echo "    nothing else is being served here - safe to continue"
 
 # --------------------------------------------------------------------------- #
 say "1/7  System packages"

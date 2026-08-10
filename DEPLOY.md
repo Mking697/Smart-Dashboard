@@ -55,6 +55,23 @@ your account was opened:
 Check your Billing console before assuming it is free. A `t3.small` running full time
 is roughly $15–20/month in `ap-south-1`; `t3.micro` about half that.
 
+### Already running something else on EC2?
+
+Give the dashboard **its own instance**. Two reasons, and the second one is not
+negotiable:
+
+1. This setup claims port 80 and replaces Nginx's enabled sites. On an instance
+   that already serves a project, that takes the other project offline. The setup
+   script refuses to run if it finds other Nginx sites, but a separate instance
+   removes the risk entirely.
+2. A `t3.micro` has 1 GB of RAM. Streamlit with pandas, Plotly and the bundled
+   India boundaries needs a few hundred MB on its own. Sharing that instance with
+   another live app will push both into swap, and the existing project gets slower
+   the moment someone opens a large spreadsheet.
+
+Also **create a new Security Group** rather than reusing the existing project's —
+editing a shared group later would change the firewall for both.
+
 ### Launch the instance
 
 1. EC2 → **Launch instance**
