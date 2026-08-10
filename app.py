@@ -351,6 +351,20 @@ if API_KEY:
     except Exception as e:
         st.sidebar.error(f"Error fetching models: {e}")
 
+st.sidebar.header("🧹 Which rows count?")
+require_key_column = st.sidebar.toggle(
+    "First column must have a value",
+    value=True,
+    help="The first column is usually the key (Order ID, Invoice No). A row with a "
+         "blank key is not a record. Ignored automatically if that column is itself mostly empty.",
+)
+drop_sparse_rows = st.sidebar.toggle(
+    "Skip nearly-empty rows",
+    value=True,
+    help="Drops rows that fill less than a quarter of their columns — for example a row "
+         "holding an order number and nothing else, which would add a phantom record to every total.",
+)
+
 st.title("🚀 AI-Powered Master Dashboard (Power BI Edition)")
 st.caption("Upload a file or sync a live Google Sheet — the dashboard builds itself.")
 st.divider()
@@ -372,7 +386,11 @@ if raw_sheets:
 
     for name, frame in raw_sheets.items():
         cleaned = auto_fix_headers(frame.copy())
-        cleaned, report = data_cleaner.clean_dataframe(cleaned)
+        cleaned, report = data_cleaner.clean_dataframe(
+            cleaned,
+            require_key_column=require_key_column,
+            drop_sparse_rows=drop_sparse_rows,
+        )
         cleaning_reports[name] = report
         if not cleaned.empty:
             dict_of_dfs[name] = cleaned

@@ -43,6 +43,17 @@ Never import backwards; `geo_assets` must stay Streamlit-free.
 ### 1b. Cleaning (`data_cleaner.py`)
 Runs after `auto_fix_headers`, before anything is charted. Only rows that carry
 data survive — a 1,000-row sheet with 100 real records is charted as 100 records.
+
+Two row rules, both switchable from the sidebar:
+* **Key column** (`require_key_column`, default on) — the first column is the key
+  (Order ID, Invoice No). Blank key, not a record. Auto-skipped when that column
+  is itself under 50% filled, since it is then a notes column.
+* **Nearly-empty rows** (`drop_sparse_rows`, default on) — drops rows under 25%
+  filled, *and* rows whose only value is the key. That second check is exact
+  rather than percentage-based, so it behaves the same on a 4-column sheet and a
+  40-column one.
+
+Both rules back off if they would remove more than half the remaining rows.
 It trims stray spaces, treats `N/A` / `-` / `NULL` as blank, drops empty columns,
 blank rows, lone `END`/`Total` footer rows, and rows too sparse to be a record.
 Duplicates are reported, never deleted silently. `render_cleaning_panel` in

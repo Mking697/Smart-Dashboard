@@ -29,6 +29,9 @@ MIN_ROW_FILL = 0.25
 # Keep the sparse-row filter from eating a genuinely sparse dataset.
 MAX_SPARSE_REMOVAL = 0.5
 
+# The first column only counts as a key if it is mostly filled in.
+MIN_KEY_FILL = 0.5
+
 # A column this numeric is treated as a number column; junk values become blanks.
 NUMERIC_COERCE_THRESHOLD = 0.8
 
@@ -87,11 +90,22 @@ def _is_footer_row(row):
     return str(values.iloc[0]).strip().lower() in FOOTER_TOKENS
 
 
-def clean_dataframe(dataframe):
+def clean_dataframe(dataframe, require_key_column=True, drop_sparse_rows=True):
     """Clean an unmanaged sheet. Returns (clean dataframe, report dict).
 
     Only rows that actually carry data survive: a sheet with 1,000 rows and 100
     real records is charted as 100 records.
+
+    Two independent rules decide what a real record is:
+
+    * ``require_key_column`` - the first column is the key (Order ID, Invoice No,
+      Transaction ID). A row with a blank key is not a record. Skipped
+      automatically when the first column is itself mostly blank, since it is
+      then a note column rather than a key.
+    * ``drop_sparse_rows`` - a row that fills less than a quarter of its columns
+      is a leftover, not a record. This is what catches a row holding an order
+      number and nothing else: a key with no data behind it still counts for
+      nothing, and would otherwise inflate every total by one.
     """
     report = {
         'rows_before': len(dataframe),
@@ -99,6 +113,10 @@ def clean_dataframe(dataframe):
         'blank_rows': 0,
         'sparse_rows': 0,
         'footer_rows': 0,
+        'key_blank_rows': 0,
+        'key_only_rows': 0,
+        'key_column': None,
+        'key_column_skipped': False,
         'empty_columns': 0,
         'trimmed_cells': 0,
         'placeholder_cells': 0,
@@ -137,8 +155,43 @@ def clean_dataframe(dataframe):
         report['footer_rows'] = int(footer_mask.sum())
         frame = frame[~footer_mask]
 
-    # 5. Rows too sparse to be a record (section separators, stray notes).
-    if len(frame):
+    # 5. The key column: no key, no record.
+    if require_key_column and len(frame):
+        key_column = frame.columns[0]
+        filled_ratio = frame[key_column].notna().mean()
+
+        if filled_ratio >= MIN_KEY_FILL:
+            report['key_column'] = key_column
+            key_blank = frame[key_column].isna()
+            report['key_blank_rows'] = int(key_blank.sum())
+            frame = frame[~key_blank]
+        else:
+            # A first column that is itself mostly empty is a note column, not a
+            # key - using it would delete most of the sheet.
+            report['key_column'] = key_column
+            report['key_column_skipped'] = True
+
+    # 6. Rows too sparse to be a record (section separators, stray notes,
+    #    and keys with nothing behind them).
+    if drop_sparse_rows and len(frame):
+        filled = frame.notna().sum(axis=1)
+
+        # A row holding its key and nothing else is not a record - an order
+        # number with no customer, date or amount would still add one to every
+        # count. Checked exactly rather than by percentage, so it works the same
+        # on a 4-column sheet and a 40-column one.
+        if report.get('key_column') and not report.get('key_column_skipped'):
+            key_only = (filled == 1) & frame[report['key_column']].notna()
+
+            # Same back-off as the sparse filter: if most rows look like this,
+            # the sheet really is just a list of keys - keep it rather than
+            # deleting everything.
+            if 0 < key_only.sum() <= MAX_SPARSE_REMOVAL * len(frame):
+                report['key_only_rows'] = int(key_only.sum())
+                frame = frame[~key_only]
+                filled = filled[~key_only]
+
+    if drop_sparse_rows and len(frame):
         fill_ratio = frame.notna().sum(axis=1) / len(frame.columns)
         sparse_mask = fill_ratio < MIN_ROW_FILL
 
@@ -167,8 +220,19 @@ def report_lines(report):
 
     if report.get('blank_rows'):
         lines.append(f"Removed **{report['blank_rows']:,} completely blank row(s)** — empty rows are never charted.")
+    if report.get('key_blank_rows'):
+        lines.append(f"Removed **{report['key_blank_rows']:,} row(s) with no **{report.get('key_column')}**"
+                     " — that is the key column, so a blank there means it is not a record.")
+    if report.get('key_column_skipped'):
+        lines.append(f"Skipped the key-column rule: **{report.get('key_column')}** is itself mostly "
+                     "empty, so it is a notes column rather than a key.")
+    if report.get('key_only_rows'):
+        lines.append(f"Removed **{report['key_only_rows']:,} row(s) that had only a "
+                     f"**{report.get('key_column')}** and nothing else — a key with no data behind it "
+                     "would add a phantom record to every total.")
     if report.get('sparse_rows'):
-        lines.append(f"Removed **{report['sparse_rows']:,} nearly-empty row(s)** that had too few values to be a real record.")
+        lines.append(f"Removed **{report['sparse_rows']:,} nearly-empty row(s)** — too few values "
+                     "to measure anything.")
     if report.get('footer_rows'):
         lines.append(f"Removed **{report['footer_rows']:,} footer row(s)** such as a lone “END” or “Total” marker.")
     if report.get('empty_columns'):
