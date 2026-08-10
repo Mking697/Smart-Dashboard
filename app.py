@@ -260,6 +260,48 @@ def run_ai_briefing(profile_text):
         st.error(f"AI briefing failed: {e}")
 
 
+# --- GUIDE BOOK PAGE ---
+GUIDE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "GUIDE.md")
+
+
+@st.cache_data(show_spinner=False)
+def load_guide():
+    """The guide book, read straight from GUIDE.md so there is only one copy to keep current."""
+    try:
+        with open(GUIDE_PATH, encoding="utf-8") as handle:
+            return handle.read()
+    except OSError:
+        return None
+
+
+def open_guide():
+    st.session_state["show_guide"] = True
+
+
+def close_guide():
+    st.session_state["show_guide"] = False
+
+
+def render_guide_page():
+    """Full-page guide, with a way back to the dashboard at the top and the bottom."""
+    st.button("← Back to dashboard", key="guide_back_top", on_click=close_guide)
+
+    guide_text = load_guide()
+
+    if guide_text is None:
+        st.error("GUIDE.md was not found next to app.py, so the guide cannot be shown here.")
+        st.caption("Read it on GitHub instead: "
+                   "https://github.com/Mking697/Smart-Dashboard/blob/main/GUIDE.md")
+        return
+
+    # The app runs in wide layout, so narrow the column to keep lines readable.
+    left_margin, reading_column, right_margin = st.columns([1, 5, 1])
+    with reading_column:
+        st.markdown(guide_text)
+        st.divider()
+        st.button("← Back to dashboard", key="guide_back_bottom", on_click=close_guide)
+
+
 # --- CLEANING REPORT ---
 def render_cleaning_panel(reports):
     """Tell the user exactly which rows were used and which were skipped."""
@@ -340,6 +382,17 @@ def render_workspace(dict_of_dfs, key_prefix):
 
 
 # --- MAIN APP LOGIC ---
+
+# The guide is its own page: opening it replaces the dashboard, so a first-time
+# user can read it without losing whatever they had loaded.
+st.sidebar.button("📘 Guide Book", use_container_width=True, key="open_guide_side",
+                  on_click=open_guide, help="Step-by-step guide — how to use this dashboard")
+st.sidebar.divider()
+
+if st.session_state.get("show_guide"):
+    render_guide_page()
+    st.stop()
+
 st.sidebar.header("⚙️ AI Settings")
 selected_model = None
 
@@ -365,8 +418,18 @@ drop_sparse_rows = st.sidebar.toggle(
          "holding an order number and nothing else, which would add a phantom record to every total.",
 )
 
-st.title("🚀 AI-Powered Master Dashboard (Power BI Edition)")
-st.caption("Upload a file or sync a live Google Sheet — the dashboard builds itself.")
+title_area, guide_area = st.columns([5, 1])
+
+with title_area:
+    st.title("🚀 AI-Powered Master Dashboard (Power BI Edition)")
+    st.caption("Upload a file or sync a live Google Sheet — the dashboard builds itself.")
+
+with guide_area:
+    st.write("")
+    st.button("📘 Guide Book", use_container_width=True, key="open_guide_top",
+              on_click=open_guide, help="New here? Step-by-step guide to using this dashboard")
+    st.caption("New here? Start here")
+
 st.divider()
 
 data_source = st.segmented_control(
