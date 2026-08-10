@@ -17,7 +17,8 @@ but reads and explains the data instead of only plotting it.
 
 | File | Responsibility |
 |---|---|
-| `app.py` | Orchestrator only: data-source panels, workspace/tabs, manual dashboard, AI deep-dive + chat. |
+| `app.py` | Orchestrator only: data-source panels, cleaning report, workspace/tabs, manual dashboard, AI deep-dive + chat. |
+| `data_cleaner.py` | Turns an unmanaged sheet into a usable table, and reports every change it made. |
 | `google_sheets.py` | Google Sheets connector. Public sheets via XLSX export, private sheets via service account. Raises `SheetAccessError(msg, hint)`. |
 | `geo_maps.py` | All map rendering. Detects what a location column *is*, then draws the right map. |
 | `geo_assets.py` | India boundary data + name resolution (states, districts, country codes, centroids). |
@@ -38,6 +39,14 @@ Never import backwards; `geo_assets` must stay Streamlit-free.
   private sheets use a service account JSON (uploaded in the UI, or
   `[gcp_service_account]` in `.streamlit/secrets.toml`). Cached 5 min, refresh
   token busts the cache. Every failure has a friendly `hint`.
+
+### 1b. Cleaning (`data_cleaner.py`)
+Runs after `auto_fix_headers`, before anything is charted. Only rows that carry
+data survive — a 1,000-row sheet with 100 real records is charted as 100 records.
+It trims stray spaces, treats `N/A` / `-` / `NULL` as blank, drops empty columns,
+blank rows, lone `END`/`Total` footer rows, and rows too sparse to be a record.
+Duplicates are reported, never deleted silently. `render_cleaning_panel` in
+`app.py` shows the user exactly what happened.
 
 ### 2. Geographical engine (`geo_maps.py`)
 Detects a location column as one of: `country`, `india-states`, `india-districts`,
@@ -82,6 +91,16 @@ Auto Analyst briefing. All calls wrapped in try/except.
    markers. If blinking ever stops working, check that selector first.
 6. **`auto_fix_headers` and `generate_dashboard` are legacy-stable.** Features get
    added around them, not inside them.
+7. **Every `st.plotly_chart` needs an explicit `key`.** Two tabs rendering the same
+   figure produced identical auto-generated element IDs and Streamlit aborted the
+   whole page with `StreamlitDuplicateElementId`.
+8. **Coerce before you aggregate.** One stray date in a numeric column left the
+   whole column as text, which dropped it from every chart and made Plotly colour
+   maps as categories instead of a scale. `data_cleaner.coerce_numeric_columns`
+   applies the 80%-numeric rule; map aggregation coerces again defensively.
+9. **The sparse-row filter must back off.** If more than half the rows look sparse
+   the data genuinely is sparse, so nothing is dropped. Without that guard the
+   cleaner would delete real datasets.
 
 ---
 

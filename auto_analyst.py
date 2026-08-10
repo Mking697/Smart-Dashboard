@@ -266,7 +266,10 @@ def _kpi_row(dataframe, profiles):
 
     for slot, measure in zip(tiles[1:], measures):
         total = measure.get('total', 0)
-        slot.metric(f"Total {humanize(measure['name'])}", f"{total:,.0f}",
+        name = humanize(measure['name'])
+        # "Total Total Amount" reads badly - do not prefix a name that already says it.
+        label = name if name.lower().startswith('total') else f"Total {name}"
+        slot.metric(label, f"{total:,.0f}",
                     help=f"Average per record: {measure.get('mean', 0):,.2f}")
 
     if categories:

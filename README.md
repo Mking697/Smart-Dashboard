@@ -11,23 +11,34 @@ what it found.
 
 ### 📥 Data In
 - **Messy file support** — upload Excel/CSV; headers are detected and repaired automatically.
+- **Unmanaged sheets get managed** — only rows that actually contain data are used.
+  A 1,000-row sheet holding 100 real records is charted as 100 records. Blank rows,
+  lone `END`/`Total` footers, empty columns, stray spaces (`" Noida"`) and
+  placeholders (`N/A`, `-`, `NULL`) are cleaned, and the app shows you a report of
+  everything it changed.
 - **Multi-sheet workspaces** — every sheet gets its own dashboard, plus a master comparison view.
 - **Google Sheets Live Sync** — paste a sheet link and pull live data. Public sheets
   work instantly; private sheets connect through a Google service account.
 
 ### 🤖 Auto Analyst
-Point it at any dataset and it builds the dashboards for you — no axis picking:
+Point it at any sheet and it builds the reports for you — no axis picking. Each
+report answers one business question:
 
-| Dashboard | What it answers |
+| Report | The question it answers |
 |---|---|
-| 📊 Executive Summary | The headline numbers and the breakdown that explains them |
-| 📈 Trends | How the numbers move over time, with period-on-period growth |
-| 🏆 Rankings & 80/20 | Who leads, and how concentrated the business really is |
-| 📉 Distribution & Outliers | Typical values, spread, and suspicious extremes |
-| 🔗 Relationships | Which measures move together, and how strongly |
-| 🧮 Cross-Tab Heatmap | Where volume concentrates across two dimensions |
-| 🌍 Geography | The data drawn on a real map |
-| 🧪 Data Quality | Missing values, duplicates and dead columns |
+| 📊 Business Overview | How is the business doing overall, and who contributes most? |
+| 📈 Growth Over Time | Are we growing, flat or falling — and when were our best periods? |
+| 🏆 Top Performers | Who are our best performers, and how dependent are we on them? |
+| 📉 What Is Normal | What is a normal value here, and which records look wrong? |
+| 🔗 What Affects What | When one number changes, which others change with it? |
+| 🧮 Best Combinations | Which combination of groups performs best, and where are the gaps? |
+| 🌍 Location Map | Which places bring the most business, and where are we absent? |
+| 🧪 Can You Trust This Data | Are there gaps or duplicates making these charts unreliable? |
+
+**Written for people who are not analysts.** Column names are humanised
+(`Q_TaxAmount` reads as *Tax Amount*), every chart has a heading, a **"how to read
+this"** line, and a plain-English **"what it means"** takeaway stating the actual
+finding — for example *"4 of 8 Sales Reps generate 80% of all Total Amount."*
 
 It also shows a **"What this data can show you"** panel — every column labelled with
 the role it plays (measure, dimension, timeline, geography, flag, identifier) and why
@@ -96,6 +107,7 @@ streamlit run app.py
 
 ```
 app.py                          Orchestrator: data sources, workspace, AI panels
+data_cleaner.py                 Cleans unmanaged sheets, reports every change
 auto_analyst.py                 Profiling engine + automatic dashboards
 geo_maps.py                     Map detection and rendering
 geo_assets.py                   India boundaries, name matching, geocoding

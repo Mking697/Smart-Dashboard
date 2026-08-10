@@ -8,6 +8,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 import auto_analyst
+import data_cleaner
 import geo_maps
 from google_sheets import SheetAccessError, load_workbook, service_account_email
 
@@ -21,10 +22,6 @@ if API_KEY:
 
 # Page Configuration
 st.set_page_config(page_title="AI Smart Dashboard", layout="wide", page_icon="📊")
-
-# A column this numeric is treated as a number column, junk values become blanks.
-NUMERIC_COERCE_THRESHOLD = 0.8
-
 
 # --- UPDATED SMART DATA CLEANING FUNCTION ---
 def auto_fix_headers(df):
@@ -56,21 +53,9 @@ def auto_fix_headers(df):
     df = df.dropna(how='all', axis=1).dropna(how='all', axis=0)
     
     df = df.infer_objects()
-    for col in df.columns:
-        try:
-            df[col] = pd.to_numeric(df[col])
-        except:
-            # Real sheets slip a stray date or note into an otherwise numeric
-            # column. All-or-nothing conversion leaves the whole column as text,
-            # which silently drops it from every chart - so if the column is
-            # mostly numbers, keep the numbers and null out the junk.
-            non_null = df[col].dropna()
-            if len(non_null):
-                coerced = pd.to_numeric(df[col], errors='coerce')
-                if coerced.notna().sum() / len(non_null) >= NUMERIC_COERCE_THRESHOLD:
-                    df[col] = coerced
-
-    return df
+    # A stray date or note in a numeric column used to leave the whole column as
+    # text, which silently dropped it from every chart. See data_cleaner.
+    return data_cleaner.coerce_numeric_columns(df)
 
 # --- HELPER FUNCTION: POWER BI STYLE DYNAMIC DASHBOARD ---
 def generate_dashboard(dataframe, key_prefix, is_compare_mode=False):
@@ -275,6 +260,38 @@ def run_ai_briefing(profile_text):
         st.error(f"AI briefing failed: {e}")
 
 
+# --- CLEANING REPORT ---
+def render_cleaning_panel(reports):
+    """Tell the user exactly which rows were used and which were skipped."""
+    if not reports:
+        return
+
+    rows_kept = sum(report.get('rows_after', 0) for report in reports.values())
+    rows_skipped = sum(report.get('rows_removed', 0) for report in reports.values())
+
+    header = f"🧹 Data cleaned — using {rows_kept:,} row(s) that actually contain data"
+    if rows_skipped:
+        header += f" ({rows_skipped:,} empty or junk row(s) skipped)"
+
+    with st.expander(header, expanded=bool(rows_skipped)):
+        for name, report in reports.items():
+            if len(reports) > 1:
+                st.markdown(f"**Sheet: {name}**")
+
+            st.caption(
+                f"Sheet had **{report['rows_before']:,} row(s)** · "
+                f"charts are built on **{report['rows_after']:,} row(s)** × "
+                f"{report['columns_after']} column(s)"
+            )
+
+            lines = data_cleaner.report_lines(report)
+            if lines:
+                for line in lines:
+                    st.markdown(f"- {line}")
+            else:
+                st.markdown("- Nothing needed cleaning — this sheet was already tidy. ✅")
+
+
 # --- WORKSPACE RENDERER (tabs + master comparison) ---
 def build_master_df(dict_of_dfs):
     """One combined frame across sheets, tagged with Source_Sheet when relevant."""
@@ -351,10 +368,16 @@ master_df = None
 
 if raw_sheets:
     dict_of_dfs = {}
+    cleaning_reports = {}
+
     for name, frame in raw_sheets.items():
         cleaned = auto_fix_headers(frame.copy())
+        cleaned, report = data_cleaner.clean_dataframe(cleaned)
+        cleaning_reports[name] = report
         if not cleaned.empty:
             dict_of_dfs[name] = cleaned
+
+    render_cleaning_panel(cleaning_reports)
 
     if not dict_of_dfs:
         st.warning("Data loaded, but every sheet came out empty after cleaning. Check the source for stray formatting.")
