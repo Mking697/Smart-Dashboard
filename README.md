@@ -119,7 +119,9 @@ google_sheets.py                Google Sheets connector (public + service accoun
 assets/india_districts.geojson  Official India boundaries (incl. J&K and Ladakh)
 ```
 
-See [DEPLOY.md](DEPLOY.md) for hosting and [CLAUDE.md](CLAUDE.md) for development context.
+New here? Start with the **[Guide Book](GUIDE.md)** — a step-by-step walkthrough written for
+non-technical users. See [DEPLOY.md](DEPLOY.md) for hosting and [CLAUDE.md](CLAUDE.md) for
+development context.
 
 ---
 
