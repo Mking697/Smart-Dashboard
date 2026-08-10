@@ -57,6 +57,13 @@ It also shows a **"What this data can show you"** panel — every column labelle
 the role it plays (measure, dimension, timeline, geography, flag, identifier) and why
 that matters.
 
+### 📋 Data Table
+The rows behind the reports, per sheet — search every column at once, filter on any
+column with the right control for its type, hide columns you don't need, and tick
+one box to turn the whole thing into a **pivot table** with row and column totals.
+The grid is a fixed height that scrolls inside itself, so the filters never get
+pushed off screen. Export whatever you are looking at as CSV.
+
 ### 🌍 Geographical Intelligence
 - **Region maps** for countries, Indian states, Indian districts and US states —
   detected automatically from the column.

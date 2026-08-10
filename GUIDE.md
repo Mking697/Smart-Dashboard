@@ -157,6 +157,7 @@ Ab do tabs dikhenge:
 | Tab | Kiske liye |
 |---|---|
 | **`🤖 Auto Analyst`** | Aap batana nahi chahte kya dekhna hai — app khud reports bana de |
+| **`📋 Data Table`** | Asli rows dekhni hain — filter karo, pivot banao, CSV nikalo |
 | **`🎛️ Manual Dashboard`** | Aapko pata hai kya dekhna hai — khud X aur Y axis chuno |
 
 **Naye ho? `🤖 Auto Analyst` se shuru karo.**
@@ -323,6 +324,41 @@ Har sheet ke andar wahi 8 reports honge, **sirf us sheet ke data par**.
 - **Chart 4** — wahi breakdown har sheet me, aur sabse bada gap kahan hai
 
 Agar sheets me kuch bhi common na ho, tab bhi size aur headline numbers compare ho jate hain.
+
+---
+
+# Part 2b — 📋 Data Table
+
+Jab charts nahi, **asli rows** dekhni hon.
+
+## Filters
+
+**`🔍 Filters`** kholo:
+
+- **`Search all columns`** — kuch bhi type karo (order number, city, naam) — poori table me dhoondhega
+- **`Filter on specific columns`** — jis column par filter chahiye wo chuno. App khud sahi control deta hai:
+  - Number column → **slider** (range)
+  - Date column → **date range picker**
+  - Text column → **checklist** (values chuno)
+
+## Pivot table
+
+**`🔀 Show as pivot table`** par tick karo. Char controls aayenge:
+
+| Control | Kya |
+|---|---|
+| **Rows** | Side me kya (Region, Category…) |
+| **Columns** | Upar kya (optional) |
+| **Values** | Kaunsa number (ya "count of rows") |
+| **Summarise by** | Sum / Average / Count / Highest / Lowest |
+
+Row aur column dono ke **Total** apne aap aa jate hain — bilkul Excel pivot jaisa.
+
+## Table ka size
+
+- **`Table height`** slider — table itni hi lambi rahegi, andar scroll hoga. Isse filters upar hi dikhte rehte hain
+- **`Columns to show`** — jo columns nahi chahiye hata do; baaki side me scroll ho jayenge
+- **`⬇️ Download CSV`** — jo abhi screen par dikh raha hai wahi download hoga (filter/pivot ke saath)
 
 ---
 

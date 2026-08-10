@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 import auth
 import auto_analyst
 import data_cleaner
+import data_table
 import geo_maps
 import sample_data
 import theme
@@ -497,7 +498,9 @@ if raw_sheets:
         key_prefix = "upload" if data_source == "📁 Upload File" else "gsheet"
         master_df = build_master_df(dict_of_dfs)
 
-        auto_tab, manual_tab = st.tabs(["🤖 Auto Analyst", "🎛️ Manual Dashboard"])
+        auto_tab, table_tab, manual_tab = st.tabs(
+            ["🤖 Auto Analyst", "📋 Data Table", "🎛️ Manual Dashboard"]
+        )
 
         with auto_tab:
             st.caption(
@@ -505,6 +508,9 @@ if raw_sheets:
                 "support is built for you."
             )
             auto_analyst.render_sheet_sections(dict_of_dfs, key_prefix, ai_callback=run_ai_briefing)
+
+        with table_tab:
+            data_table.render(dict_of_dfs, key_prefix)
 
         with manual_tab:
             render_workspace(dict_of_dfs, key_prefix)
