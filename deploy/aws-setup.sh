@@ -155,7 +155,14 @@ sudo nginx -t
 sudo systemctl restart nginx
 
 # --------------------------------------------------------------------------- #
-PUBLIC_DNS="$(curl -fsS --max-time 5 http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null || true)"
+# Newer instances require IMDSv2, where every metadata read needs a token first.
+IMDS_TOKEN="$(curl -fsS -X PUT --max-time 3 \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 60" \
+    http://169.254.169.254/latest/api/token 2>/dev/null || true)"
+
+PUBLIC_DNS="$(curl -fsS --max-time 3 \
+    ${IMDS_TOKEN:+-H "X-aws-ec2-metadata-token: $IMDS_TOKEN"} \
+    http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null || true)"
 
 printf "\n\033[1;32mDone.\033[0m\n"
 if [ -n "$PUBLIC_DNS" ]; then
