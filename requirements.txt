@@ -1,0 +1,17 @@
+streamlit>=1.40
+pandas>=2.0
+numpy>=1.26
+plotly>=5.20
+openpyxl>=3.1
+python-dotenv>=1.0
+requests>=2.31
+
+# Gemini AI
+google-generativeai>=0.8
+
+# Google Sheets live sync (private sheets via service account)
+google-auth>=2.30
+google-api-python-client>=2.150
+
+# Country name/code normalisation for the world map
+pycountry>=24.0
