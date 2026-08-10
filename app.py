@@ -11,6 +11,7 @@ import auth
 import auto_analyst
 import data_cleaner
 import geo_maps
+import sample_data
 import theme
 from google_sheets import SheetAccessError, load_workbook, service_account_email
 
@@ -123,7 +124,14 @@ def file_upload_panel():
     uploaded_file = st.file_uploader("Upload your Excel or CSV file here", type=['csv', 'xlsx'])
 
     if uploaded_file is None:
+        # Someone arriving without a spreadsheet to hand can still see the whole
+        # product working, which is the difference between understanding it and
+        # bouncing off an empty page.
+        if st.session_state.get("use_sample"):
+            return sample_data.build_sample_workbook()
         return None
+
+    st.session_state["use_sample"] = False
 
     if uploaded_file.name.endswith('.xlsx'):
         xls = pd.ExcelFile(uploaded_file)
@@ -450,6 +458,16 @@ data_source = st.segmented_control(
 
 raw_sheets = file_upload_panel() if data_source == "📁 Upload File" else google_sheets_panel()
 
+if not raw_sheets:
+    st.write("")
+    sample_col, _spacer = st.columns([1, 3])
+    with sample_col:
+        st.button("✨ Try it with sample data", use_container_width=True, type="primary",
+                  key="try_sample", on_click=lambda: st.session_state.update(use_sample=True),
+                  help="Loads a year of realistic Indian sales data — no file needed")
+    st.write("")
+    theme.hero()
+
 master_df = None
 
 if raw_sheets:
@@ -466,6 +484,10 @@ if raw_sheets:
         cleaning_reports[name] = report
         if not cleaned.empty:
             dict_of_dfs[name] = cleaned
+
+    if st.session_state.get("use_sample"):
+        st.info("🧪 **Sample data** — a year of realistic Indian sales orders. "
+                "Upload your own file above to replace it.")
 
     render_cleaning_panel(cleaning_reports)
 

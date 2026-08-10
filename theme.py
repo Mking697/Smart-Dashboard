@@ -310,6 +310,60 @@ div[data-baseweb="select"] > div:focus-within, .stTextInput input:focus {{
 }}
 .al-brand__tag {{ font-size: .82rem; color: var(--c-muted-text); margin-top: 2px; }}
 
+/* ---- Hero: what a first-time visitor sees instead of a blank page ------ */
+.al-hero {{
+  background:
+    radial-gradient(120% 140% at 100% 0%, #E8F0FF 0%, rgba(232,240,255,0) 58%),
+    linear-gradient(135deg, #0F2557 0%, #1E40AF 52%, #2B62D6 100%);
+  border-radius: 16px;
+  padding: var(--s-8) var(--s-8);
+  color: #EAF1FF;
+  box-shadow: 0 18px 40px -22px rgba(15,37,87,.65);
+  animation: rise .5s var(--ease) both;
+}}
+.al-hero h2 {{
+  color: #FFFFFF !important;
+  font-size: clamp(1.5rem, 2.6vw, 2.05rem) !important;
+  font-weight: 700; line-height: 1.16; margin: 0 0 var(--s-3);
+  letter-spacing: -.02em; text-wrap: balance;
+}}
+.al-hero p {{ color: #C6D8FA; font-size: 1.02rem; margin: 0; max-width: 60ch; }}
+.al-hero__badge {{
+  display: inline-flex; align-items: center; gap: 7px;
+  background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.22);
+  color: #DDE9FF; font-family: {FONT_DATA}; font-size: .72rem; font-weight: 500;
+  letter-spacing: .08em; text-transform: uppercase;
+  padding: 5px 11px; border-radius: 999px; margin-bottom: var(--s-4);
+}}
+
+/* Feature cards */
+.al-cards {{
+  display: grid; gap: var(--s-3);
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  margin-top: var(--s-4);
+}}
+.al-card {{
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 12px;
+  padding: var(--s-4) var(--s-5);
+  box-shadow: var(--shadow-1);
+  animation: rise .45s var(--ease) both;
+  transition: transform .22s var(--ease), box-shadow .22s var(--ease), border-color .22s var(--ease);
+}}
+.al-card:nth-child(1) {{ animation-delay: .06s; }}
+.al-card:nth-child(2) {{ animation-delay: .12s; }}
+.al-card:nth-child(3) {{ animation-delay: .18s; }}
+.al-card:nth-child(4) {{ animation-delay: .24s; }}
+.al-card:hover {{ transform: translateY(-3px); box-shadow: var(--shadow-2); border-color: var(--c-border-strong); }}
+.al-card__icon {{
+  width: 34px; height: 34px; border-radius: 9px;
+  background: var(--c-muted); color: var(--c-primary);
+  display: grid; place-items: center; margin-bottom: var(--s-3);
+}}
+.al-card h4 {{ margin: 0 0 4px; font-size: .96rem; font-weight: 650; color: var(--c-heading); }}
+.al-card p {{ margin: 0; font-size: .86rem; line-height: 1.5; color: var(--c-muted-text); }}
+
 .al-authcard {{
   background: var(--c-surface);
   border: 1px solid var(--c-border);
@@ -352,6 +406,52 @@ def brand_header(name="Autolyst", tagline="Your sheet in. Ready-made reports out
             </div>""",
         unsafe_allow_html=True,
     )
+
+
+def _icon(path):
+    """Lucide-style stroked glyph. SVG, not an emoji - it takes the brand colour
+    and renders identically on every OS."""
+    return (f'<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+            f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+            f'{path}</svg>')
+
+
+FEATURES = [
+    (_icon('<path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/>'),
+     "8 ready-made reports",
+     "Growth, top performers, outliers, correlations — built from your columns, not a template."),
+    (_icon('<path d="M12 22s8-4.5 8-11a8 8 0 1 0-16 0c0 6.5 8 11 8 11Z"/><circle cx="12" cy="11" r="3"/>'),
+     "Maps that know India",
+     "City and state names alone are enough. Jammu &amp; Kashmir and Ladakh drawn correctly."),
+    (_icon('<path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/>'),
+     "Messy sheets, cleaned",
+     "Blank rows, stray spaces and placeholder text removed — and it tells you what it removed."),
+    (_icon('<path d="M12 3a6 6 0 0 0-6 6c0 2 1 3 1 5h10c0-2 1-3 1-5a6 6 0 0 0-6-6Z"/><path d="M9 18h6"/><path d="M10 21h4"/>'),
+     "Plain-English answers",
+     "Every chart says how to read it, and what it actually means for your business."),
+]
+
+
+def hero():
+    """The welcome panel shown before any data is loaded."""
+    st.markdown(
+        """
+        <div class="al-hero">
+          <span class="al-hero__badge">No formulas required</span>
+          <h2>Turn a spreadsheet into a boardroom-ready report.</h2>
+          <p>Upload an Excel file or connect a Google Sheet. The data is cleaned, profiled
+             and turned into reports that explain themselves — in about ten seconds.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    cards = "".join(
+        f'<div class="al-card"><div class="al-card__icon">{icon}</div>'
+        f'<h4>{title}</h4><p>{body}</p></div>'
+        for icon, title, body in FEATURES
+    )
+    st.markdown(f'<div class="al-cards">{cards}</div>', unsafe_allow_html=True)
 
 
 def apply():
