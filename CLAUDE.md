@@ -140,12 +140,17 @@ Auto Analyst briefing. All calls wrapped in try/except.
 11. **Auto Compare matches columns by their readable name**, not the raw header, so
     `TotalAmount` and `Total_Amount` line up. When sheets share nothing, it still
     compares row counts and each sheet's headline measure.
-12. **The look is CSS over Streamlit's `data-testid` hooks.** `theme.py` restyles
+12. **Never hand multi-line HTML to `st.markdown`.** Streamlit renders markdown,
+    and markdown turns any line indented by four or more spaces into a code block -
+    so pretty-printed markup appears on screen as its own source code. This shipped
+    once: the login screen showed its own `<div class="al-brand__name">`. Every HTML
+    block now goes through `theme.html()`, which collapses it to one line.
+13. **The look is CSS over Streamlit's `data-testid` hooks.** `theme.py` restyles
     `st.metric`, tabs, buttons and cards without touching a call site, and registers
     one Plotly template as the default so all ~30 charts follow it. A Streamlit
     upgrade that renames a hook degrades the styling; it does not break the app.
     Never scatter `update_layout` colour calls - change the template instead.
-13. **Never raise inside `auth._connect()`.** The context manager commits only when
+14. **Never raise inside `auth._connect()`.** The context manager commits only when
     the block exits cleanly, so raising after a write rolls it back. This silently
     disabled the OTP attempt counter - every wrong guess reported "4 attempts left"
     and a six-digit code was open to unlimited brute force. `verify_otp` now decides

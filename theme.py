@@ -19,10 +19,23 @@ Two deliberate decisions:
   the app at once, instead of thirty `update_layout` calls that drift apart.
 """
 
+import re
+
 import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
+
+
+def html(markup):
+    """Collapse a multi-line HTML block onto one line before rendering it.
+
+    Streamlit renders markdown, and markdown turns any line indented by four or
+    more spaces into a code block. Pretty-printed markup therefore arrives on
+    screen as its own source code. Collapsing the whitespace costs nothing -
+    HTML collapses it anyway - and removes the whole class of bug.
+    """
+    return re.sub(r"\s*\n\s*", " ", markup).strip()
 
 # --------------------------------------------------------------------------- #
 # Tokens - the single source of colour
@@ -381,7 +394,7 @@ div[data-baseweb="select"] > div:focus-within, .stTextInput input:focus {{
 
 # Inline SVG rather than an emoji: it scales, it takes the brand colour, and it
 # renders identically on every OS.
-LOGO_SVG = """
+LOGO_SVG = html("""
 <svg class="al-brand__mark" width="34" height="34" viewBox="0 0 32 32" fill="none"
      role="img" aria-label="Autolyst logo">
   <rect width="32" height="32" rx="8" fill="url(#alg)"/>
@@ -394,16 +407,20 @@ LOGO_SVG = """
     </linearGradient>
   </defs>
 </svg>
-"""
+""")
 
 
 def brand_header(name="Autolyst", tagline="Your sheet in. Ready-made reports out."):
     """Logo + wordmark, used on the login screen and the dashboard header."""
     st.markdown(
-        f"""<div class="al-brand">{LOGO_SVG}
-              <div><div class="al-brand__name">{name}</div>
-                   <div class="al-brand__tag">{tagline}</div></div>
-            </div>""",
+        html(f"""
+            <div class="al-brand">{LOGO_SVG}
+              <div>
+                <div class="al-brand__name">{name}</div>
+                <div class="al-brand__tag">{tagline}</div>
+              </div>
+            </div>
+        """),
         unsafe_allow_html=True,
     )
 
@@ -411,9 +428,11 @@ def brand_header(name="Autolyst", tagline="Your sheet in. Ready-made reports out
 def _icon(path):
     """Lucide-style stroked glyph. SVG, not an emoji - it takes the brand colour
     and renders identically on every OS."""
-    return (f'<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-            f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-            f'{path}</svg>')
+    return html(
+        f'<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        f'{path}</svg>'
+    )
 
 
 FEATURES = [
@@ -435,14 +454,15 @@ FEATURES = [
 def hero():
     """The welcome panel shown before any data is loaded."""
     st.markdown(
-        """
-        <div class="al-hero">
-          <span class="al-hero__badge">No formulas required</span>
-          <h2>Turn a spreadsheet into a boardroom-ready report.</h2>
-          <p>Upload an Excel file or connect a Google Sheet. The data is cleaned, profiled
-             and turned into reports that explain themselves — in about ten seconds.</p>
-        </div>
-        """,
+        html("""
+            <div class="al-hero">
+              <span class="al-hero__badge">No formulas required</span>
+              <h2>Turn a spreadsheet into a boardroom-ready report.</h2>
+              <p>Upload an Excel file or connect a Google Sheet. The data is cleaned,
+                 profiled and turned into reports that explain themselves — in about
+                 ten seconds.</p>
+            </div>
+        """),
         unsafe_allow_html=True,
     )
 
@@ -451,7 +471,7 @@ def hero():
         f'<h4>{title}</h4><p>{body}</p></div>'
         for icon, title, body in FEATURES
     )
-    st.markdown(f'<div class="al-cards">{cards}</div>', unsafe_allow_html=True)
+    st.markdown(html(f'<div class="al-cards">{cards}</div>'), unsafe_allow_html=True)
 
 
 def apply():

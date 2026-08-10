@@ -20,6 +20,7 @@ import os
 import re
 import secrets
 import sqlite3
+import textwrap
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -444,17 +445,17 @@ def logout():
 
 def _pitch():
     with st.expander("📘 What is this?"):
-        st.markdown(
+        st.markdown(textwrap.dedent(
             """
-            Upload an Excel file or connect a Google Sheet, and this builds the reports for you —
-            no formulas, no pivot tables, no chart settings.
+            Upload an Excel file or connect a Google Sheet, and this builds the reports
+            for you — no formulas, no pivot tables, no chart settings.
 
             - **8 ready-made reports**, each answering one business question
             - Every chart comes with **how to read it** and **what it means**
             - Messy sheets are cleaned first: blank rows, stray spaces and placeholder text
             - Your data is drawn on a **real map**, India included properly
             """
-        )
+        ))
 
 
 def _signup_form():
