@@ -16,6 +16,108 @@ long-running process alive.
 
 ---
 
+## Where this app can and cannot run
+
+It is Python, and Streamlit keeps a websocket open for the life of a session. So it
+needs a host that gives you a Python runtime and lets a process stay alive.
+
+| Host | Works? | Why |
+|---|---|---|
+| AWS EC2 / Lightsail | ✅ | Full control, background jobs possible |
+| Streamlit Community Cloud | ✅ | Purpose-built, free |
+| Render / Railway | ✅ | Python + long-running process supported |
+| Hostinger **VPS** | ✅ | Root access, so Python can be installed |
+| Hostinger **Web / Business / Cloud** | ❌ | Node.js only. Hostinger's own docs: *"Python is supported exclusively on VPS Hosting"* — Web and Cloud plans have no root access |
+| Any shared/PHP hosting | ❌ | No persistent process |
+
+---
+
+## Option 0 — AWS EC2 on the instance's own hostname (no domain needed)
+
+Every EC2 instance gets a free public DNS name the moment it boots:
+
+```
+http://ec2-13-234-56-78.ap-south-1.compute.amazonaws.com
+```
+
+That **is** your temporary domain. Nothing to buy, nothing to configure.
+
+### Cost, honestly
+
+AWS changed the free tier on **15 July 2025**, so which deal you get depends on when
+your account was opened:
+
+| Account created | What you get |
+|---|---|
+| Before 15 Jul 2025 | Classic free tier — 750 hrs/month of `t2.micro`/`t3.micro` free for 12 months |
+| After 15 Jul 2025 | $100 credits (+$100 for onboarding tasks). EC2 draws **from the credits** — there is no separate free 750 hours |
+
+Check your Billing console before assuming it is free. A `t3.small` running full time
+is roughly $15–20/month in `ap-south-1`; `t3.micro` about half that.
+
+### Launch the instance
+
+1. EC2 → **Launch instance**
+2. **AMI:** Ubuntu Server 24.04 LTS
+3. **Type:** `t3.small` (2 GB RAM) recommended. `t3.micro` (1 GB) works — the setup
+   script adds swap so pandas can still install and run.
+4. **Key pair:** create one and download the `.pem`
+5. **Network settings → Edit**, allow inbound:
+   - **SSH (22)** from *My IP*
+   - **HTTP (80)** from *Anywhere (0.0.0.0/0)*
+6. **Storage:** 16–20 GB
+7. Launch, then copy the **Public IPv4 DNS** from the instance page
+
+> Assign an **Elastic IP** if you plan to stop/start the instance — otherwise the
+> public DNS name changes every time it restarts. It is free while attached to a
+> running instance.
+
+### Set it up (one command)
+
+SSH in:
+
+```bash
+ssh -i your-key.pem ubuntu@ec2-XX-XX-XX-XX.ap-south-1.compute.amazonaws.com
+```
+
+Then run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Mking697/Smart-Dashboard/main/deploy/aws-setup.sh | bash
+```
+
+The script installs Python and Nginx, adds 2 GB of swap, clones the repo, builds the
+virtualenv, registers a systemd service that survives reboots and crashes, and puts
+Nginx in front on port 80 with the websocket headers Streamlit needs.
+
+### Add your API key
+
+```bash
+nano ~/Smart-Dashboard/.env          # GEMINI_API_KEY=your_real_key
+sudo systemctl restart dashboard
+```
+
+### Day-to-day
+
+```bash
+sudo systemctl status dashboard      # is it running?
+sudo journalctl -u dashboard -f      # live logs
+cd ~/Smart-Dashboard && git pull && sudo systemctl restart dashboard   # deploy an update
+```
+
+### The one real limitation
+
+The URL will be **`http://`, not `https://`**. Let's Encrypt will not issue a
+certificate for an `amazonaws.com` hostname you do not own, so browsers show
+"Not secure". That is fine for testing and internal demos.
+
+For HTTPS you need either your own domain (point it at the Elastic IP, then
+`sudo certbot --nginx`), or **AWS App Runner**, which serves an
+`xxx.awsapprunner.com` URL over HTTPS out of the box — but has no meaningful free
+tier, so expect roughly $5–25/month.
+
+---
+
 ## Option 1 — Streamlit Community Cloud (free, best for MVP)
 
 1. Push this repo to GitHub.
