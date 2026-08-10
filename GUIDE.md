@@ -21,11 +21,13 @@ Aapko koi formula, pivot table ya chart setting nahi seekhni.
 
 | Kya chahiye | Zaruri hai? |
 |---|---|
-| Excel (`.xlsx`) ya CSV file, **ya** Google Sheet ka link | ✅ Haan |
+| Excel (`.xlsx`) ya CSV file, **ya** Google Sheet ka link | Haan — ya bina file ke **`✨ Try it with sample data`** dabao |
 | Internet | ✅ Haan (AI aur Google Sheet ke liye) |
 | Gemini API key (`.env` file me) | Optional — sirf AI features ke liye |
 
-App chalane ka command:
+**Live app:** https://autolyst.online — browser me kholo, bas.
+
+Apne computer par chalana ho to:
 
 ```bash
 streamlit run app.py

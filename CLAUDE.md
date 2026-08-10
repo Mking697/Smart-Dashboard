@@ -11,6 +11,24 @@ but reads and explains the data instead of only plotting it.
 **Stack:** Python 3.13, Streamlit, Pandas, Plotly, Google Gemini API.
 **Virtualenv:** `venv/` in the project root (`venv/Scripts/python.exe` on Windows).
 
+### It is live — treat it as production
+
+| | |
+|---|---|
+| **URL** | https://autolyst.online (HTTPS, auto-renewing Let's Encrypt cert) |
+| **Host** | AWS EC2 `t3.micro`, Ubuntu 24.04, `ap-south-1` |
+| **Instance** | `i-0de3279fe8e742bcc` — named `smart-dashboard` |
+| **Elastic IP** | `3.7.191.122` |
+| **Service** | `systemd` unit `dashboard`, Nginx in front on :80/:443 |
+| **Deploy** | `cd ~/Smart-Dashboard && git pull && sudo systemctl restart dashboard` |
+| **Email** | Brevo API, sender `noreply@autolyst.online` (domain authenticated) |
+
+> A second EC2 instance, `admetics` (`i-086da987a1253e557`, Elastic IP
+> `15.252.150.220`), belongs to a different project. **Never touch it.**
+> `deploy/aws-setup.sh` refuses to run where another Nginx site already exists.
+
+Real people can sign up. Anything merged to `main` and pulled is live.
+
 ---
 
 ## Repo Map — what lives where
@@ -28,6 +46,9 @@ but reads and explains the data instead of only plotting it.
 | `geo_assets.py` | India boundary data + name resolution (states, districts, country codes, centroids). |
 | `auto_analyst.py` | Profiles the data, decides which dashboards to build, builds them. |
 | `assets/india_districts.geojson` | 4 MB district-level India boundaries. **Includes Jammu & Kashmir and Ladakh.** |
+| `deploy/aws-setup.sh` | One-command provision of a fresh Ubuntu box. Refuses to run where a site exists. |
+| `deploy/add-domain.sh` | Points Nginx at a domain and obtains the HTTPS certificate. Checks DNS first. |
+| `tests/` | Eight suites plus `run_all.py`. No framework — plain scripts that stub Streamlit. |
 
 **Import direction:** `app.py` → `auto_analyst` → `geo_maps` → `geo_assets`.
 Never import backwards; `geo_assets` must stay Streamlit-free.
@@ -96,7 +117,26 @@ Executive Summary · Trends · Rankings & 80/20 · Distribution & Outliers ·
 Relationships · Cross-Tab Heatmap · Geography · Data Quality.
 Each tab shows a "why this view" line. AI briefing sends **stats only, never raw rows**.
 
-### 4. Gemini AI
+### 4. Data Table (`data_table.py`)
+Per sheet: a search box matching every column, per-column filters that pick their
+control from the column type (range slider / date range / checklist), a column
+chooser, and a **pivot** checkbox with row and column totals. The grid is a fixed
+height that scrolls inside itself — a 400-row sheet rendered in full pushes the
+filters off screen. Whatever is on screen exports as CSV.
+
+### 5. Look and feel (`theme.py`)
+Design system from the `ui-ux-pro-max` skill: Data-Dense Dashboard style, blue and
+amber palette adjusted for WCAG, Fira Sans with Fira Code for figures, dashboard
+density, standard motion tier. See details 13 and 15 for why it is all CSS and how
+it broke twice.
+
+### 6. Sample data (`sample_data.py`)
+A deterministic year of Indian sales orders behind **Try it with sample data**, so
+a visitor with no spreadsheet can see the whole product. Shaped to exercise
+everything: measures, dimensions, a timeline with a festive lift, and cities and
+states the map can actually place.
+
+### 7. Gemini AI
 Sidebar model picker, micro-level column deep dive, free-form chat, and the
 Auto Analyst briefing. All calls wrapped in try/except.
 
@@ -150,7 +190,14 @@ Auto Analyst briefing. All calls wrapped in try/except.
     one Plotly template as the default so all ~30 charts follow it. A Streamlit
     upgrade that renames a hook degrades the styling; it does not break the app.
     Never scatter `update_layout` colour calls - change the template instead.
-14. **Never raise inside `auth._connect()`.** The context manager commits only when
+14. **Button labels need their colour stated on the button's children.** Streamlit
+    wraps a label in a `<p>`, so a global paragraph colour beats the button's own
+    and the text vanishes into the background. This shipped: "Log in" was dark navy
+    on a dark navy gradient. All three kinds must be covered — `.stButton`,
+    `stDownloadButton` and `stFormSubmitButton`; the login button is the third kind,
+    which the first fix missed. Never put a blanket `[data-testid="stSidebar"] *`
+    colour rule back — it repaints button labels too.
+15. **Never raise inside `auth._connect()`.** The context manager commits only when
     the block exits cleanly, so raising after a write rolls it back. This silently
     disabled the OTP attempt counter - every wrong guess reported "4 attempts left"
     and a six-digit code was open to unlimited brute force. `verify_otp` now decides
@@ -161,17 +208,26 @@ Auto Analyst briefing. All calls wrapped in try/except.
 
 ## Current State
 
-All 8 parts of the integration test pass, and the app boots clean (HTTP 200, no
-errors in the log). The `Revenue`-as-identifier bug is **fixed and verified**.
+Live, in production, with signups open. **All 8 test suites pass**, the app boots
+clean, and https://autolyst.online serves 200 over a valid certificate.
+
+Everything under "What Is Built" is done and verified. Delivered in this order:
+Google Sheets sync → India-accurate maps → Auto Analyst → layman-readable reports
+→ data cleaning → per-sheet sections and Auto Compare → guide book → AWS
+deployment with domain and HTTPS → accounts with email OTP → BI visual system →
+hero and sample data → data table with pivot.
 
 ---
 
 ## Next Steps
 
-1. **1-Click PDF Report Export.** Recommended approach: render Plotly figures to PNG
-   with **Kaleido**, compose an HTML report, convert with **ReportLab or fpdf2**
-   (pure Python — `pdfkit`/`weasyprint` need external binaries and break on Windows
-   and most free hosts). Must include KPIs, charts and the AI insights.
+**Agreed with the user as the next piece of work: 1-Click PDF Report Export.**
+
+1. **1-Click PDF Report Export.** Render Plotly figures to PNG with **Kaleido**,
+   then write the document with **ReportLab or fpdf2** — both pure Python.
+   `pdfkit`/`weasyprint` need external binaries and will not install cleanly on the
+   1 GB t3.micro. Include the KPIs, the charts and the AI insight text. Watch
+   memory: Kaleido spawns a browser process on a box with 1 GB plus 2 GB of swap.
 2. **Automated Email Reporting (Triggers).** User picks Hourly/Daily/Monthly + an
    email address. Streamlit reruns per interaction and cannot host a scheduler, so
    run **APScheduler in a separate `scheduler.py` process** that re-fetches the
@@ -180,8 +236,26 @@ errors in the log). The `Revenue`-as-identifier bug is **fixed and verified**.
 3. **Subscriptions.** Accounts already exist, so this is a plan/limit layer on top:
    a `plan` column on `users`, usage counters, and a payment provider. Nothing in
    `auth.py` needs restructuring for it.
-4. Per-user saved workspaces (uploads are currently in-session only, so no data
-   is shared between accounts today).
+4. Per-user saved workspaces (uploads are in-session only today, so no data is
+   shared between accounts).
+
+### Known gaps — say these out loud rather than discovering them later
+
+- **A browser refresh logs the user out.** Streamlit session state does not survive
+  a reload. Fixing it properly needs a signed cookie or token, and it is the
+  strongest single argument for eventually leaving Streamlit.
+- **The look rides on Streamlit's internal `data-testid` hooks.** A major Streamlit
+  upgrade can degrade the styling. The app keeps working.
+- **No usage limits.** Any signed-up account can spend the owner's Gemini quota.
+  Limits belong with the subscription work.
+- **`users.db` has no automated backup.** The command is in DEPLOY.md; nothing runs
+  it on a schedule.
+- **The user asked whether Streamlit could be dropped.** Answer given: the VPS and
+  the domain are a different layer, and removing Streamlit means replacing it —
+  3-5 weeks for FastAPI + React, producing the same features. Recommended keeping
+  it until there are paying customers. Roughly 60% of the code is Streamlit-coupled
+  (`app.py`, `auto_analyst`, `geo_maps`, `theme`, `data_table`); `geo_assets`,
+  `data_cleaner`, `google_sheets` and the core of `auth` would carry over.
 
 **Rules:** deliver in modular steps and wait for approval between them; keep the UI
 premium and clean; handle every error gracefully with an actionable hint; and never
@@ -192,11 +266,33 @@ break the existing AI or charting logic.
 ## Run & Test
 
 ```bash
-venv/Scripts/streamlit.exe run app.py        # start the app
 venv/Scripts/python.exe -m pip install -r requirements.txt
+venv/Scripts/streamlit.exe run app.py        # http://localhost:8501
+venv/Scripts/python.exe tests/run_all.py     # all eight suites, one line each
 ```
 
-The integration test lives outside the repo (scratchpad). It stubs Streamlit so the
-real code paths execute, then asserts on the Plotly figures produced — country
-merging, the J&K overlay, geocoded pins, column roles, and every auto scenario.
-Rebuild it the same way if you need it again.
+**Run `tests/run_all.py` before every push.** No framework to install — each suite
+is a plain script that installs `tests/st_stub.py` as a fake Streamlit, executes
+the real code paths, and asserts on what comes out: the Plotly figures, the cleaned
+frames, the column roles, the pivot totals, the auth guards.
+
+| Suite | Covers |
+|---|---|
+| `test_full` | Geo detection, country merging, the J&K overlay, every auto scenario |
+| `test_real` | The whole pipeline on a genuinely messy workbook |
+| `test_cleaner` | Row rules, placeholder text, the sparse-data back-off |
+| `test_sheets` | Per-sheet sections and Auto Compare |
+| `test_keyrule` | Key column vs nearly-empty rows, and their guards |
+| `test_auth` | Signup, OTP expiry and attempt limits, login lockout |
+| `test_table` | Filters, pivot totals checked against the source, export |
+| `test_html` | Markup renders as HTML, button labels stay readable |
+
+Four suites want a messy workbook. They skip cleanly without one; set
+`SAMPLE_WORKBOOK` to an `.xlsx` path to run them.
+
+To check the deployed app rather than the code:
+
+```bash
+curl -sI https://autolyst.online | head -1
+sudo journalctl -u dashboard -n 50 --no-pager     # on the server
+```

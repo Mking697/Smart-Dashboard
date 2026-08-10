@@ -5,6 +5,11 @@ Google Gemini AI. It acts like a smart Power BI that doesn't just plot your data
 it profiles it, decides what is worth showing, builds the dashboards, and explains
 what it found.
 
+### 🔴 Live: **[autolyst.online](https://autolyst.online)**
+
+Running on AWS EC2 with HTTPS and open signups. Deployment steps are in
+[DEPLOY.md](DEPLOY.md).
+
 ---
 
 ## 🔥 Key Features
@@ -138,12 +143,27 @@ streamlit run app.py
 app.py                          Orchestrator: data sources, workspace, AI panels
 auth.py                         Signup, email OTP, login, session gate
 data_cleaner.py                 Cleans unmanaged sheets, reports every change
-auto_analyst.py                 Profiling engine + automatic dashboards
+auto_analyst.py                 Profiling engine + automatic reports
+data_table.py                   Filters, pivot builder, scrollable grid, CSV export
 geo_maps.py                     Map detection and rendering
 geo_assets.py                   India boundaries, name matching, geocoding
 google_sheets.py                Google Sheets connector (public + service account)
+theme.py                        Design tokens, component CSS, Plotly template
+sample_data.py                  Deterministic demo workbook
 assets/india_districts.geojson  Official India boundaries (incl. J&K and Ladakh)
+deploy/                         AWS provisioning and HTTPS scripts
+tests/                          Eight suites — run tests/run_all.py
 ```
+
+## 🧪 Tests
+
+```bash
+venv/Scripts/python.exe tests/run_all.py
+```
+
+No framework to install. Each suite stubs Streamlit, runs the real code paths and
+asserts on what comes out — the figures, the cleaned frames, the column roles, the
+pivot totals, the auth guards. Run it before every push.
 
 New here? Start with the **[Guide Book](GUIDE.md)** — a step-by-step walkthrough written for
 non-technical users. See [DEPLOY.md](DEPLOY.md) for hosting and [CLAUDE.md](CLAUDE.md) for
@@ -157,6 +177,8 @@ development context.
 - [x] Google Sheets live sync
 - [x] India-accurate geography + automatic dashboard generation
 - [x] Accounts: signup, email OTP verification, login
-- [ ] 1-click PDF report export
+- [x] Data table with filters and pivot
+- [x] Deployed on AWS with a custom domain and HTTPS
+- [ ] 1-click PDF report export ← **next**
 - [ ] Scheduled email reports (hourly / daily / monthly)
 - [ ] Subscription plans and billing

@@ -1,5 +1,16 @@
 # 🌍 Deployment Strategy
 
+> **Currently deployed:** https://autolyst.online — AWS EC2 `t3.micro`, Ubuntu 24.04,
+> `ap-south-1`, instance `i-0de3279fe8e742bcc`, Elastic IP `3.7.191.122`.
+> Option 0 below is the path that was actually taken.
+>
+> **To ship a change:**
+> ```bash
+> ssh -i your-key.pem ubuntu@3.7.191.122
+> cd ~/Smart-Dashboard && git pull && sudo systemctl restart dashboard
+> ```
+> Then hard-refresh the browser (`Ctrl+Shift+R`) — CSS is cached.
+
 This is a Python/Streamlit app, so it cannot run on standard Node.js or shared PHP
 hosting (basic Hostinger plans included). It needs a Python runtime that can keep a
 long-running process alive.
@@ -139,6 +150,18 @@ sudo systemctl status dashboard      # is it running?
 sudo journalctl -u dashboard -f      # live logs
 cd ~/Smart-Dashboard && git pull && sudo systemctl restart dashboard   # deploy an update
 ```
+
+### When a deploy looks like it did nothing
+
+Almost always the browser cache. Hard-refresh with `Ctrl+Shift+R`. If it still
+looks stale, confirm what the server is actually running:
+
+```bash
+cd ~/Smart-Dashboard && git log --oneline -1
+```
+
+Compare that against the latest commit on GitHub. A `git pull` that reports
+"Already up to date" while the page looks old means the cache, not the code.
 
 ### The one real limitation
 
