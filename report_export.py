@@ -19,6 +19,10 @@ from fpdf import FPDF
 import auto_analyst
 import theme
 
+class ChartRenderError(RuntimeError):
+    """Kaleido could not produce an image - the message says how to fix it."""
+
+
 PAGE_WIDTH = 210          # A4 portrait, millimetres
 MARGIN = 14
 CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN
@@ -167,8 +171,19 @@ def _write_block(pdf, kind, payload):
         pdf.ln(1)
 
     elif kind == "chart":
-        png = payload.to_image(format="png", width=CHART_PX[0], height=CHART_PX[1],
-                               scale=CHART_SCALE)
+        try:
+            png = payload.to_image(format="png", width=CHART_PX[0], height=CHART_PX[1],
+                                   scale=CHART_SCALE)
+        except Exception as error:
+            # Kaleido drives a browser rather than shipping one. A server with no
+            # Chrome fails here with something unreadable, so say what to do.
+            raise ChartRenderError(
+                "Charts could not be rendered to images. Kaleido needs a Chrome "
+                "browser, which this machine does not have yet.\n\n"
+                "On the server, run once:\n"
+                "    ~/Smart-Dashboard/deploy/install-pdf.sh\n\n"
+                f"Underlying error: {error}"
+            ) from error
         height = CONTENT_WIDTH * CHART_PX[1] / CHART_PX[0]
         if pdf.get_y() + height > pdf.h - 22:
             pdf.add_page()

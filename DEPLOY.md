@@ -128,6 +128,26 @@ nano ~/Smart-Dashboard/.env          # GEMINI_API_KEY=your_real_key
 sudo systemctl restart dashboard
 ```
 
+### PDF export needs a browser on the server
+
+Kaleido renders charts by driving Chrome rather than shipping one. A desktop
+already has Chrome; a fresh Ubuntu server does not, and Chrome needs shared
+libraries a minimal image leaves out. Run this once:
+
+```bash
+~/Smart-Dashboard/deploy/install-pdf.sh
+sudo systemctl restart dashboard
+```
+
+It installs the libraries, downloads Chrome, and proves it works by rendering a
+test PNG. Until it has run, exporting shows a message saying exactly this rather
+than a browser stack trace.
+
+> Chrome wants a few hundred MB of RAM. On the 1 GB `t3.micro`, export **one
+> report** first and watch `sudo journalctl -u dashboard -f`. If the service is
+> OOM-killed during an all-reports export, either export one at a time or move
+> the instance up to `t3.small`.
+
 ### Back up the user accounts
 
 Accounts live in one SQLite file. Losing it means every user has to sign up again,
