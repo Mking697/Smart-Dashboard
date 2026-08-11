@@ -49,7 +49,7 @@ Real people can sign up. Anything merged to `main` and pulled is live.
 | `assets/india_districts.geojson` | 4 MB district-level India boundaries. **Includes Jammu & Kashmir and Ladakh.** |
 | `deploy/aws-setup.sh` | One-command provision of a fresh Ubuntu box. Refuses to run where a site exists. |
 | `deploy/add-domain.sh` | Points Nginx at a domain and obtains the HTTPS certificate. Checks DNS first. |
-| `tests/` | Eight suites plus `run_all.py`. No framework — plain scripts that stub Streamlit. |
+| `tests/` | Nine suites plus `run_all.py`. No framework — plain scripts that stub Streamlit. |
 
 **Import direction:** `app.py` → `auto_analyst` → `geo_maps` → `geo_assets`.
 Never import backwards; `geo_assets` must stay Streamlit-free.
@@ -246,8 +246,9 @@ yourself in Excel instead.
 
 ## Current State
 
-Live, in production, with signups open. **All 8 test suites pass**, the app boots
-clean, and https://autolyst.online serves 200 over a valid certificate.
+Live, in production, with signups open. **All 9 test suites pass**, the app boots
+clean, and https://autolyst.online serves 200 over a valid certificate. PDF export
+has been exercised on the server, not only locally.
 
 Everything under "What Is Built" is done and verified. Delivered in this order:
 Google Sheets sync → India-accurate maps → Auto Analyst → layman-readable reports
@@ -261,12 +262,14 @@ hero and sample data → data table with pivot.
 
 **Agreed with the user as the next piece of work: 1-Click PDF Report Export.**
 
-1. ~~1-Click PDF Report Export~~ — **done**. See `report_export.py`.
-   **Not yet verified on the server:** Kaleido spawns a Chrome process, and the
-   t3.micro has 1 GB of RAM plus 2 GB of swap. Watch `journalctl -u dashboard`
-   for an OOM kill the first time someone exports all reports there. If it does
-   fall over, the fix is to export one report at a time, or move the box up a
-   size.
+1. ~~1-Click PDF Report Export~~ — **done and running on the server**. See
+   `report_export.py`. A single report exported from https://autolyst.online on
+   **11 Aug 2026** — Kaleido drove Chrome on the t3.micro without an OOM kill, so
+   the 1 GB box handles one report.
+   **Still untested there: "All reports"** — eight reports and twelve charts in
+   one run, against 1 GB of RAM plus 2 GB of swap. Watch `journalctl -u dashboard`
+   the first time someone tries it. If it falls over, export one report at a time
+   or move the instance up a size.
 2. **Automated Email Reporting (Triggers).** User picks Hourly/Daily/Monthly + an
    email address. Streamlit reruns per interaction and cannot host a scheduler, so
    run **APScheduler in a separate `scheduler.py` process** that re-fetches the
@@ -307,7 +310,7 @@ break the existing AI or charting logic.
 ```bash
 venv/Scripts/python.exe -m pip install -r requirements.txt
 venv/Scripts/streamlit.exe run app.py        # http://localhost:8501
-venv/Scripts/python.exe tests/run_all.py     # all eight suites, one line each
+venv/Scripts/python.exe tests/run_all.py     # all nine suites, one line each
 ```
 
 **Run `tests/run_all.py` before every push.** No framework to install — each suite
@@ -325,6 +328,7 @@ frames, the column roles, the pivot totals, the auth guards.
 | `test_auth` | Signup, OTP expiry and attempt limits, login lockout |
 | `test_table` | Filters, pivot totals checked against the source, export |
 | `test_html` | Markup renders as HTML, button labels stay readable |
+| `test_pdf` | Capture mode, one report vs all, nothing clipped off the page |
 
 Four suites want a messy workbook. They skip cleanly without one; set
 `SAMPLE_WORKBOOK` to an `.xlsx` path to run them.

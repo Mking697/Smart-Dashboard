@@ -143,10 +143,11 @@ It installs the libraries, downloads Chrome, and proves it works by rendering a
 test PNG. Until it has run, exporting shows a message saying exactly this rather
 than a browser stack trace.
 
-> Chrome wants a few hundred MB of RAM. On the 1 GB `t3.micro`, export **one
-> report** first and watch `sudo journalctl -u dashboard -f`. If the service is
-> OOM-killed during an all-reports export, either export one at a time or move
-> the instance up to `t3.small`.
+> Chrome wants a few hundred MB of RAM. A **single report** has been exported
+> from the live 1 GB `t3.micro` without an OOM kill (11 Aug 2026). **All reports**
+> — eight of them, twelve charts in one run — has not been tried there yet, so
+> watch `sudo journalctl -u dashboard -f` the first time. If the service is
+> OOM-killed, either export one at a time or move the instance up to `t3.small`.
 
 ### Back up the user accounts
 
