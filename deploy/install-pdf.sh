@@ -39,12 +39,13 @@ echo "    done"
 
 # --------------------------------------------------------------------------- #
 say "3/4  Chrome for Kaleido"
-if "$VENV/bin/python" -c "
-import sys
-from choreographer.browsers import chromium
-sys.exit(0 if chromium.Chromium.get_path() else 1)
-" 2>/dev/null; then
-    echo "    a browser is already available"
+# plotly_get_chrome drops the browser here. Checking the path directly is more
+# reliable than importing choreographer's internals, which move between versions
+# - the first version of this check silently failed and re-downloaded Chrome on
+# every run.
+CHROME_DIR="$HOME/.local/share/choreographer/deps"
+if compgen -G "$CHROME_DIR/chrome-linux64/chrome" >/dev/null 2>&1; then
+    echo "    already installed, skipping the download"
 else
     "$VENV/bin/plotly_get_chrome" -y
     echo "    downloaded"
