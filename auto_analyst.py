@@ -10,6 +10,8 @@ Every scenario carries a "why" line, so the dashboard also explains itself.
 """
 
 import re
+import threading
+from contextlib import contextmanager
 
 import numpy as np
 import pandas as pd
@@ -61,14 +63,77 @@ def metric_label(metric):
     return "Number of Records" if metric in ("Record count", "Count (Frequency)") else humanize(metric)
 
 
+# --------------------------------------------------------------------------- #
+# Capture: the same report code either draws to the page or fills a buffer
+# --------------------------------------------------------------------------- #
+#
+# The PDF has to contain exactly what the screen shows, and the only way to keep
+# those two in step is to build both from one code path. Every scenario writes
+# through the four helpers below; when a capture buffer is active they append to
+# it and draw nothing.
+#
+# The buffer is thread-local because Streamlit serves each session on its own
+# thread - a module-level list would let one user's export collect another
+# user's charts.
+
+_capture = threading.local()
+
+
+def _sink():
+    return getattr(_capture, "buffer", None)
+
+
+@contextmanager
+def capturing():
+    """Collect a report's charts and text instead of rendering them."""
+    _capture.buffer = []
+    try:
+        yield _capture.buffer
+    finally:
+        _capture.buffer = None
+
+
+def chart_heading(text):
+    """The question a chart answers, above it."""
+    buffer = _sink()
+    if buffer is None:
+        st.markdown(f"##### {text}")
+    else:
+        buffer.append(("heading", text))
+
+
+def show_chart(fig, key):
+    buffer = _sink()
+    if buffer is None:
+        st.plotly_chart(fig, use_container_width=True, key=key)
+    else:
+        buffer.append(("chart", fig))
+
+
+def show_kpi(slot, label, value, help_text=None):
+    buffer = _sink()
+    if buffer is None:
+        slot.metric(label, value, help=help_text)
+    else:
+        buffer.append(("kpi", (label, value)))
+
+
 def explain(text):
     """One plain-English line under a chart telling the user how to read it."""
-    st.caption(f"📖 **How to read this:** {text}")
+    buffer = _sink()
+    if buffer is None:
+        st.caption(f"📖 **How to read this:** {text}")
+    else:
+        buffer.append(("explain", text))
 
 
 def takeaway(text):
     """The finding the chart actually shows, stated in words."""
-    st.success(f"💡 **What it means:** {text}")
+    buffer = _sink()
+    if buffer is None:
+        st.success(f"💡 **What it means:** {text}")
+    else:
+        buffer.append(("takeaway", text))
 
 
 def pct(part, whole):
@@ -218,10 +283,12 @@ ROLE_LABELS = {
 }
 
 
-def render_data_story(profiles, dataframe):
-    """The 'here is what your data can show' panel."""
-    st.write("### 🧭 What this data can show you")
+def render_data_story(profiles, dataframe, key_prefix=""):
+    """The 'here is what your data can show' panel.
 
+    Collapsed by default: it is reference material you consult once, and left
+    open it pushes the actual reports below the fold.
+    """
     rows = []
     for profile in profiles:
         label, meaning = ROLE_LABELS.get(profile['role'], ('❔ Unknown', ''))
@@ -234,7 +301,11 @@ def render_data_story(profiles, dataframe):
             'Missing %': profile['missing_pct'],
         })
 
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    show = st.toggle("🧭 What this data can show you", value=False,
+                     key=f"story_{key_prefix}",
+                     help="Every column, what the app decided it is, and why that matters")
+    if show:
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
     measures = rank_measures(profiles)
     categories = rank_categories(profiles)
@@ -263,20 +334,20 @@ def _kpi_row(dataframe, profiles):
     categories = rank_categories(profiles)
 
     tiles = st.columns(1 + len(measures) + (1 if categories else 0))
-    tiles[0].metric("📊 Records", f"{len(dataframe):,}")
+    show_kpi(tiles[0], "📊 Records", f"{len(dataframe):,}")
 
     for slot, measure in zip(tiles[1:], measures):
         total = measure.get('total', 0)
         name = humanize(measure['name'])
         # "Total Total Amount" reads badly - do not prefix a name that already says it.
         label = name if name.lower().startswith('total') else f"Total {name}"
-        slot.metric(label, f"{total:,.0f}",
-                    help=f"Average per record: {measure.get('mean', 0):,.2f}")
+        show_kpi(slot, label, f"{total:,.0f}",
+                 f"Average per record: {measure.get('mean', 0):,.2f}")
 
     if categories:
         primary = categories[0]
-        tiles[-1].metric(f"Different {humanize(primary['name'])}s", f"{primary['n_unique']:,}",
-                         help=f"Most common: {primary.get('top_value', '-')}")
+        show_kpi(tiles[-1], f"Different {humanize(primary['name'])}s", f"{primary['n_unique']:,}",
+                 f"Most common: {primary.get('top_value', '-')}")
 
 
 def scenario_executive(dataframe, profiles, key_prefix):
@@ -308,22 +379,22 @@ def scenario_executive(dataframe, profiles, key_prefix):
         value_label = "Number of Records"
 
     with left:
-        st.markdown(f"##### 📊 Chart 1 — Which {dim_label} brings the most {value_label}?")
+        chart_heading(f"📊 Chart 1 — Which {dim_label} brings the most {value_label}?")
         fig = px.bar(agg, x=dimension, y=value_col, color=dimension, text_auto='.2s',
                      title=f"{value_label} by {dim_label}", color_discrete_sequence=PALETTE,
                      labels={dimension: dim_label, value_col: value_label})
         fig.update_layout(showlegend=False, xaxis_tickangle=-40, height=420)
-        st.plotly_chart(fig, use_container_width=True, key=f"exec_bar_{key_prefix}")
+        show_chart(fig, f"exec_bar_{key_prefix}")
         explain(f"Each bar is one {dim_label}. Taller bar = more {value_label}. "
                 "The tallest bar on the left is your biggest contributor.")
 
     with right:
-        st.markdown(f"##### 🥧 Chart 2 — How is {value_label} split across {dim_label}?")
+        chart_heading(f"🥧 Chart 2 — How is {value_label} split across {dim_label}?")
         fig = px.pie(agg, names=dimension, values=value_col, hole=0.45,
                      title=f"Share of {value_label}", color_discrete_sequence=PALETTE)
         fig.update_traces(textposition='inside', textinfo='percent+label')
         fig.update_layout(height=420)
-        st.plotly_chart(fig, use_container_width=True, key=f"exec_pie_{key_prefix}")
+        show_chart(fig, f"exec_pie_{key_prefix}")
         explain("The whole circle is your total. Each slice shows how big that "
                 f"{dim_label}'s share is — a big slice means heavy dependence on one name.")
 
@@ -369,14 +440,14 @@ def scenario_trend(dataframe, profiles, key_prefix):
     series = series[series['Value'].notna()]
 
     label = metric_label(metric)
-    st.markdown(f"##### 📈 Chart — How has {label} changed over time?")
+    chart_heading(f"📈 Chart — How has {label} changed over time?")
 
     fig = px.area(series, x=date_col, y='Value', markers=True,
                   title=f"{label} over time ({freq_label.lower()})",
                   color_discrete_sequence=['#2563eb'],
                   labels={'Value': label, date_col: humanize(date_col)})
     fig.update_layout(height=420, hovermode='x unified')
-    st.plotly_chart(fig, use_container_width=True, key=f"trend_area_{key_prefix}")
+    show_chart(fig, f"trend_area_{key_prefix}")
     explain(f"Time runs left to right. The line going up means {label} is growing, "
             "going down means it is falling. Hover any point to see that period's exact number.")
 
@@ -428,19 +499,19 @@ def scenario_ranking(dataframe, profiles, key_prefix):
     dim_label, value_label = humanize(dimension), metric_label(metric)
 
     with left:
-        st.markdown(f"##### 🏆 Chart 1 — Your top {dim_label}s by {value_label}")
+        chart_heading(f"🏆 Chart 1 — Your top {dim_label}s by {value_label}")
         top = agg.head(15).sort_values('Value')
         fig = px.bar(top, x='Value', y=dimension, orientation='h', text_auto='.2s',
                      title=f"Top {len(top)} {dim_label}s by {value_label}", color='Value',
                      color_continuous_scale='Blues',
                      labels={'Value': value_label, dimension: dim_label})
         fig.update_layout(height=460, coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True, key=f"rank_bar_{key_prefix}")
+        show_chart(fig, f"rank_bar_{key_prefix}")
         explain("The longest bar at the top is your best performer. "
                 "Bars are sorted, so you read this list from top to bottom.")
 
     with right:
-        st.markdown("##### 📉 Chart 2 — Do a few names carry the business?")
+        chart_heading("📉 Chart 2 — Do a few names carry the business?")
         pareto = agg.head(30).reset_index(drop=True)
         fig = px.line(pareto, x=pareto.index + 1, y='Cumulative %', markers=True,
                       title="Running total share (Pareto)", color_discrete_sequence=['#dc2626'])
@@ -448,7 +519,7 @@ def scenario_ranking(dataframe, profiles, key_prefix):
                       annotation_text="80% of the total", annotation_position="bottom right")
         fig.update_layout(height=460, xaxis_title=f"Number of {dim_label}s (best first)",
                           yaxis_title="% of total covered")
-        st.plotly_chart(fig, use_container_width=True, key=f"rank_pareto_{key_prefix}")
+        show_chart(fig, f"rank_pareto_{key_prefix}")
         explain("Start at the left and add up your best performers one by one. "
                 "Where the line crosses the dashed 80% mark tells you how few names "
                 "make up most of the business.")
@@ -480,21 +551,21 @@ def scenario_distribution(dataframe, profiles, key_prefix):
     label = humanize(metric)
 
     with left:
-        st.markdown(f"##### 📊 Chart 1 — What is a normal {label}?")
+        chart_heading(f"📊 Chart 1 — What is a normal {label}?")
         fig = px.histogram(values, nbins=40, title=f"How {label} values are spread",
                            color_discrete_sequence=['#2563eb'])
         fig.update_layout(height=400, showlegend=False, xaxis_title=label,
                           yaxis_title="How many records")
-        st.plotly_chart(fig, use_container_width=True, key=f"dist_hist_{key_prefix}")
+        show_chart(fig, f"dist_hist_{key_prefix}")
         explain(f"Each bar counts how many records fall in that {label} range. The tallest "
                 "bar is your most common value - that is what normal looks like.")
 
     with right:
-        st.markdown(f"##### 📦 Chart 2 — Any unusual {label} values?")
+        chart_heading(f"📦 Chart 2 — Any unusual {label} values?")
         fig = px.box(values, title=f"Typical range and odd values in {label}",
                      color_discrete_sequence=['#0ea5e9'])
         fig.update_layout(height=400, showlegend=False, yaxis_title=label)
-        st.plotly_chart(fig, use_container_width=True, key=f"dist_box_{key_prefix}")
+        show_chart(fig, f"dist_box_{key_prefix}")
         explain("The box holds the middle half of your records. Dots sitting far away from "
                 "the box are unusual values worth checking.")
 
@@ -538,12 +609,12 @@ def scenario_relationships(dataframe, profiles, key_prefix):
     readable = correlation.rename(index=humanize, columns=humanize)
 
     with left:
-        st.markdown("##### 🔗 Chart 1 — Which numbers move together?")
+        chart_heading("🔗 Chart 1 — Which numbers move together?")
         fig = px.imshow(readable, text_auto='.2f', aspect='auto',
                         color_continuous_scale='RdBu_r', zmin=-1, zmax=1,
                         title="Relationship strength between your numbers")
         fig.update_layout(height=430)
-        st.plotly_chart(fig, use_container_width=True, key=f"corr_heatmap_{key_prefix}")
+        show_chart(fig, f"corr_heatmap_{key_prefix}")
         explain("Find where a row and a column meet. A score near **+1** (red) means the two "
                 "rise together, near **-1** (blue) means one falls as the other rises, and "
                 "near **0** means they are unrelated.")
@@ -566,7 +637,7 @@ def scenario_relationships(dataframe, profiles, key_prefix):
     first_label, second_label = humanize(first), humanize(second)
 
     with right:
-        st.markdown(f"##### 🎯 Chart 2 — {first_label} vs {second_label}")
+        chart_heading(f"🎯 Chart 2 — {first_label} vs {second_label}")
         colour_by = rank_categories(profiles)
         colour = colour_by[0]['name'] if colour_by else None
         labels = {first: first_label, second: second_label}
@@ -576,7 +647,7 @@ def scenario_relationships(dataframe, profiles, key_prefix):
                          title=f"{first_label} compared with {second_label}",
                          color_discrete_sequence=PALETTE, opacity=0.7, labels=labels)
         fig.update_layout(height=430)
-        st.plotly_chart(fig, use_container_width=True, key=f"corr_scatter_{key_prefix}")
+        show_chart(fig, f"corr_scatter_{key_prefix}")
         explain("Every dot is one record. If the dots line up going upward the two numbers "
                 "grow together; a shapeless cloud means they have little to do with each other.")
 
@@ -618,13 +689,13 @@ def scenario_crosstab(dataframe, profiles, key_prefix):
                         matrix.sum(axis=0).sort_values(ascending=False).index[:20]]
 
     row_label, col_label, value_label = humanize(rows), humanize(cols), metric_label(metric)
-    st.markdown(f"##### 🔥 Chart — Where does {value_label} pile up across {row_label} and {col_label}?")
+    chart_heading(f"🔥 Chart — Where does {value_label} pile up across {row_label} and {col_label}?")
 
     fig = px.imshow(matrix, text_auto='.3s', aspect='auto', color_continuous_scale='Blues',
                     title=f"{value_label} by {row_label} and {col_label}",
                     labels=dict(x=col_label, y=row_label, color=value_label))
     fig.update_layout(height=520)
-    st.plotly_chart(fig, use_container_width=True, key=f"crosstab_heatmap_{key_prefix}")
+    show_chart(fig, f"crosstab_heatmap_{key_prefix}")
     explain(f"Every square is one {row_label} combined with one {col_label}. "
             "Darker squares hold more - the darkest square is your busiest combination, "
             "and empty pale areas are gaps you are not serving.")
@@ -658,12 +729,12 @@ def scenario_quality(dataframe, profiles, key_prefix):
     col3.metric("Useless columns", len(constants), help="Same value in every row")
     col4.metric("Blank columns", len(empties))
 
-    st.markdown("##### 🧪 Chart — Which columns have gaps in them?")
+    chart_heading("🧪 Chart — Which columns have gaps in them?")
     fig = px.bar(missing.head(20), x='Missing %', y='Column', orientation='h',
                  title="Percentage of missing values, by column", color='Missing %',
                  color_continuous_scale='Reds', labels={'Column': 'Column'})
     fig.update_layout(height=460, coloraxis_showscale=False)
-    st.plotly_chart(fig, use_container_width=True, key=f"quality_missing_{key_prefix}")
+    show_chart(fig, f"quality_missing_{key_prefix}")
     explain("A longer red bar means more blank cells in that column. Anything past roughly "
             "20% is risky - charts built on it are only telling part of the story.")
 
@@ -783,6 +854,64 @@ def build_scenarios(dataframe, profiles):
     return scenarios
 
 
+def build_data_digest(dataframe, profiles, max_values=40):
+    """A compact, factual description of this dataset for the AI to answer from.
+
+    The chat used to be handed nothing but a list of column names, so it could
+    not answer anything and fell back on explaining how to do it yourself in
+    Excel. This gives it the actual distributions - distinct values and their
+    counts for dimensions, real totals and ranges for measures - so answers come
+    from the data instead of from general knowledge.
+
+    Statistics only. Raw rows never leave the server.
+    """
+    lines = [
+        f"DATASET: {len(dataframe):,} rows x {len(dataframe.columns)} columns.",
+        "",
+    ]
+
+    for profile in profiles:
+        name = profile["name"]
+        readable = humanize(name)
+        role = profile["role"]
+        head = f"- {readable} (raw column '{name}') [{role}], {profile['n_unique']} distinct, {profile['missing_pct']}% missing"
+
+        if role == "measure":
+            lines.append(
+                head + f", total={profile.get('total', 0):,.2f}"
+                f", mean={profile.get('mean', 0):,.2f}"
+                f", median={profile.get('median', 0):,.2f}"
+                f", min={profile.get('minimum', 0):,.2f}"
+                f", max={profile.get('maximum', 0):,.2f}"
+            )
+        elif role == "date":
+            lines.append(head + f", from {profile.get('min')} to {profile.get('max')}")
+        elif role in ("category", "geo", "flag"):
+            counts = dataframe[name].dropna().astype(str).value_counts()
+            shown = counts.head(max_values)
+            listed = ", ".join(f"{value} ({count})" for value, count in shown.items())
+            more = "" if len(counts) <= max_values else f", …and {len(counts) - max_values} more"
+            lines.append(head + f"\n    values: {listed}{more}")
+        else:
+            lines.append(head)
+
+    return "\n".join(lines)
+
+
+DATA_ONLY_RULES = """
+ANSWER ONLY FROM THE DATA SUMMARY ABOVE.
+
+- Base every number and every claim on that summary. Do not use outside knowledge.
+- If the summary does not contain what is needed, say exactly that in one line and
+  name the column or figure that is missing. Do not guess.
+- Never explain how the user could work it out themselves. Do not suggest Excel
+  steps, pivot tables, SQL queries or Python code. Do not output code of any kind.
+- Never ask the user to paste their data - you already have the summary.
+- Give the answer first, in one or two sentences, then the supporting numbers.
+- Use the readable column names, not the raw ones.
+"""
+
+
 def build_ai_briefing(dataframe, profiles, scenarios):
     """Compact, privacy-friendly profile text for the AI - stats only, no raw rows."""
     lines = [f"Dataset: {len(dataframe):,} rows x {len(dataframe.columns)} columns.", "", "COLUMNS:"]
@@ -857,7 +986,7 @@ def render_sheet_sections(sheets, key_prefix, ai_callback=None):
 def _render_one_sheet(name, dataframe, key_prefix, ai_callback):
     st.markdown(f"### 📄 Sheet: {name}")
     st.caption(f"{len(dataframe):,} rows × {len(dataframe.columns)} columns — analysed on its own.")
-    render_auto_dashboard(dataframe, f"{key_prefix}_{_slug(name)}", ai_callback)
+    render_auto_dashboard(dataframe, f"{key_prefix}_{_slug(name)}", ai_callback, sheet_name=name)
 
 
 # --------------------------------------------------------------------------- #
@@ -896,11 +1025,11 @@ def render_comparison(sheets, key_prefix):
         'Groups to compare': [len(rank_categories(profiles[name])) for name in names],
     })
 
-    st.markdown("##### 📏 Chart 1 — How big is each sheet?")
+    chart_heading("📏 Chart 1 — How big is each sheet?")
     fig = px.bar(sizes, x='Sheet', y='Rows', color='Sheet', text_auto=True,
                  title="Records per sheet", color_discrete_sequence=PALETTE)
     fig.update_layout(height=380, showlegend=False)
-    st.plotly_chart(fig, use_container_width=True, key=f"cmp_rows_{key_prefix}")
+    show_chart(fig, f"cmp_rows_{key_prefix}")
     explain("Each bar is one sheet — simply how much data it holds. A much smaller bar "
             "may mean that sheet is incomplete.")
     st.dataframe(sizes, use_container_width=True, hide_index=True)
@@ -922,12 +1051,12 @@ def render_comparison(sheets, key_prefix):
 
     if headline:
         head_frame = pd.DataFrame(headline)
-        st.markdown("##### 💰 Chart 2 — The headline number in each sheet")
+        chart_heading("💰 Chart 2 — The headline number in each sheet")
         fig = px.bar(head_frame, x='Sheet', y='Total', color='Sheet', text='Headline number',
                      title="Each sheet's main number", color_discrete_sequence=PALETTE)
         fig.update_traces(textposition='outside')
         fig.update_layout(height=420, showlegend=False)
-        st.plotly_chart(fig, use_container_width=True, key=f"cmp_headline_{key_prefix}")
+        show_chart(fig, f"cmp_headline_{key_prefix}")
         explain("Every sheet has one number that matters most — the label on each bar says "
                 "which one. These may be different things, so compare the scale, not the meaning.")
 
@@ -938,7 +1067,7 @@ def render_comparison(sheets, key_prefix):
     # ---- 3. What the sheets share ----------------------------------------
     shared = set.intersection(*[set(column_maps[name].keys()) for name in names])
 
-    st.markdown("##### 🧩 What do these sheets have in common?")
+    chart_heading("🧩 What do these sheets have in common?")
     if shared:
         st.success(f"✅ **{len(shared)} column(s)** appear in every sheet (matched by their "
                    "readable name), so they can be compared directly.")
@@ -985,12 +1114,12 @@ def render_comparison(sheets, key_prefix):
                 for name in names for key in picked
             ])
 
-            st.markdown("##### 📊 Chart 3 — Same numbers, sheet by sheet")
+            chart_heading("📊 Chart 3 — Same numbers, sheet by sheet")
             fig = px.bar(totals, x='Measure', y='Total', color='Sheet', barmode='group',
                          text_auto='.2s', title="Shared totals compared across sheets",
                          color_discrete_sequence=PALETTE)
             fig.update_layout(height=430)
-            st.plotly_chart(fig, use_container_width=True, key=f"cmp_measures_chart_{key_prefix}")
+            show_chart(fig, f"cmp_measures_chart_{key_prefix}")
             explain("Bars are grouped by measure and coloured by sheet. Comparing bars inside "
                     "one group tells you which sheet carries more of that number.")
 
@@ -1015,7 +1144,7 @@ def render_comparison(sheets, key_prefix):
     if not shared_dims:
         return
 
-    st.markdown("##### 🔍 Chart 4 — The same breakdown in every sheet")
+    chart_heading("🔍 Chart 4 — The same breakdown in every sheet")
     control1, control2 = st.columns(2)
     with control1:
         dim_key = st.selectbox("Break down by", shared_dims, format_func=str.title,
@@ -1056,7 +1185,7 @@ def render_comparison(sheets, key_prefix):
                  labels={'Group': dim_key.title(), 'Value': metric_name},
                  color_discrete_sequence=PALETTE)
     fig.update_layout(height=460, xaxis_tickangle=-40)
-    st.plotly_chart(fig, use_container_width=True, key=f"cmp_dim_chart_{key_prefix}")
+    show_chart(fig, f"cmp_dim_chart_{key_prefix}")
     explain(f"Each cluster is one {dim_key.title()}, with one bar per sheet. A missing or tiny "
             "bar shows where a sheet is behind the others.")
 
@@ -1071,16 +1200,89 @@ def render_comparison(sheets, key_prefix):
         )
 
 
-def render_auto_dashboard(dataframe, key_prefix, ai_callback=None):
+def render_export_panel(dataframe, scenarios, key_prefix, sheet_name=None):
+    """Export the reports to PDF - all of them, or just the one you are reading.
+
+    Charts are rendered by a headless browser, which takes a few seconds each.
+    The default is therefore a single report; exporting all of them shows a
+    progress bar rather than appearing to hang.
+    """
+    # Imported here rather than at module scope: report_export imports this
+    # module, and Kaleido is heavy enough not to load until it is needed.
+    import report_export
+
+    state_key = f"pdf_bytes_{key_prefix}"
+    name_key = f"pdf_name_{key_prefix}"
+
+    with st.expander("📄 Export to PDF", expanded=False):
+        scope_col, button_col = st.columns([3, 1])
+
+        with scope_col:
+            options = ["All reports"] + [scenario["title"] for scenario in scenarios]
+            scope = st.selectbox(
+                "What should the PDF contain?", options, key=f"pdf_scope_{key_prefix}",
+                help="One report is quick. All of them takes about a minute.",
+            )
+        with button_col:
+            st.write("")
+            generate = st.button("Generate PDF", type="primary", use_container_width=True,
+                                 key=f"pdf_go_{key_prefix}")
+
+        chosen = scenarios if scope == "All reports" else [
+            s for s in scenarios if s["title"] == scope
+        ]
+
+        if scope == "All reports":
+            st.caption(f"All {len(scenarios)} reports, every chart included. "
+                       "Rendering the charts takes roughly a minute.")
+
+        if generate:
+            progress = st.progress(0.0, text="Starting…")
+
+            def report_progress(done, total, label):
+                progress.progress(done / max(total, 1), text=f"{label} ({done}/{total})")
+
+            try:
+                pdf_bytes = report_export.build_pdf(
+                    dataframe, chosen, sheet_name=sheet_name,
+                    title=sheet_name or "Data Report" if scope == "All reports" else scope,
+                    on_progress=report_progress,
+                )
+                progress.empty()
+                st.session_state[state_key] = pdf_bytes
+                stub = (sheet_name or "report").replace(" ", "_").lower()
+                st.session_state[name_key] = (
+                    f"{stub}_all_reports.pdf" if scope == "All reports"
+                    else f"{stub}_{_slug(scope)}.pdf"
+                )
+                st.success(f"Ready — {len(pdf_bytes) / 1024:,.0f} KB")
+            except Exception as error:
+                progress.empty()
+                st.error(f"The PDF could not be built: {error}")
+
+        if st.session_state.get(state_key):
+            st.download_button(
+                "⬇️ Download PDF",
+                st.session_state[state_key],
+                file_name=st.session_state.get(name_key, "report.pdf"),
+                mime="application/pdf",
+                use_container_width=True,
+                key=f"pdf_dl_{key_prefix}",
+            )
+
+
+def render_auto_dashboard(dataframe, key_prefix, ai_callback=None, sheet_name=None):
     """Profile the data, explain it, then build every scenario it supports."""
     if dataframe is None or dataframe.empty:
         st.info("Load some data to run the auto analyst.")
         return
 
     profiles = profile_dataframe(dataframe)
-    render_data_story(profiles, dataframe)
+    render_data_story(profiles, dataframe, key_prefix)
 
     scenarios = build_scenarios(dataframe, profiles)
+
+    render_export_panel(dataframe, scenarios, key_prefix, sheet_name)
 
     st.write(f"### 📑 {len(scenarios)} ready-made reports from your sheet")
     st.caption("Open any tab below. Each report answers one business question, and every chart "

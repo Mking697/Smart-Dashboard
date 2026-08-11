@@ -84,7 +84,7 @@ def _build_template():
         paper_bgcolor=SURFACE,
         plot_bgcolor=SURFACE,
         colorway=CATEGORICAL,
-        margin=dict(l=8, r=8, t=48, b=8),
+        margin=dict(l=8, r=16, t=48, b=56),
         # Gridlines stay quiet so they never compete with the data.
         xaxis=dict(
             gridcolor=MUTED, linecolor=BORDER_STRONG, zerolinecolor=MUTED,
@@ -98,9 +98,13 @@ def _build_template():
             title=dict(font=dict(size=12, color=MUTED_TEXT)),
             automargin=True,
         ),
+        # A legend parked outside the plot (x=1.02) is drawn beyond the SVG and
+        # gets clipped - which is why pie labels read "Am…", "Sar…". Laying it
+        # out horizontally underneath keeps every entry inside the figure.
         legend=dict(
-            font=dict(size=12), bgcolor="rgba(0,0,0,0)",
-            orientation="v", yanchor="top", y=1, xanchor="left", x=1.02,
+            font=dict(size=11), bgcolor="rgba(0,0,0,0)",
+            orientation="h", yanchor="top", y=-0.16, xanchor="left", x=0,
+            itemwidth=30,
         ),
         hoverlabel=dict(
             bgcolor=HEADING, bordercolor=HEADING,

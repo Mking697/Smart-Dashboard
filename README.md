@@ -62,6 +62,11 @@ It also shows a **"What this data can show you"** panel — every column labelle
 the role it plays (measure, dimension, timeline, geography, flag, identifier) and why
 that matters.
 
+### 📄 PDF Export
+Export **one report or all of them** as a PDF — the charts as images, the KPIs, and
+the plain-English "what it means" lines underneath each one. It is built from the
+same code that draws the page, so the document always matches what you saw.
+
 ### 📋 Data Table
 The rows behind the reports, per sheet — search every column at once, filter on any
 column with the right control for its type, hide columns you don't need, and tick
@@ -179,6 +184,7 @@ development context.
 - [x] Accounts: signup, email OTP verification, login
 - [x] Data table with filters and pivot
 - [x] Deployed on AWS with a custom domain and HTTPS
-- [ ] 1-click PDF report export ← **next**
+- [x] 1-click PDF report export
+- [ ] Scheduled email reports (hourly / daily / monthly) ← **next**
 - [ ] Scheduled email reports (hourly / daily / monthly)
 - [ ] Subscription plans and billing

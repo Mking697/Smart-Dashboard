@@ -527,24 +527,34 @@ if master_df is not None and not master_df.empty:
 
     with col_ai2:
         if deep_dive_btn and API_KEY:
-            with st.spinner(f"AI is deeply analyzing '{target_column}'..."):
-                col_data = master_df[target_column].value_counts().head(20).to_string()
-                prompt = f"""
-                You are a Senior Data Analyst. The user wants a MICRO-LEVEL deep dive into the column '{target_column}'.
-                Here are the top values and their counts in this column:
-                {col_data}
+            with st.spinner(f"Reading '{auto_analyst.humanize(target_column)}'..."):
+                column_profile = auto_analyst.profile_column(master_df[target_column], target_column)
+                counts = master_df[target_column].dropna().astype(str).value_counts()
 
-                Provide a highly detailed, 4-point micro-analysis covering:
-                1. Dominant patterns/trends.
-                2. Hidden anomalies or risks.
-                3. Business impact of this specific data distribution.
-                4. Strategic recommendation based on this column.
-                Be highly specific and avoid generic answers.
-                """
+                prompt = f"""
+You are a data analyst. Report on ONE column of the user's dataset: '{auto_analyst.humanize(target_column)}'.
+
+DATA SUMMARY FOR THIS COLUMN
+Rows in dataset : {len(master_df):,}
+Detected as     : {column_profile['role']}
+Distinct values : {column_profile['n_unique']}
+Missing         : {column_profile['missing_pct']}%
+{"Total " + format(column_profile.get('total', 0), ',.2f') + " | mean " + format(column_profile.get('mean', 0), ',.2f') + " | min " + format(column_profile.get('minimum', 0), ',.2f') + " | max " + format(column_profile.get('maximum', 0), ',.2f') if column_profile['role'] == 'measure' else ""}
+
+Value counts (most common first):
+{counts.head(40).to_string()}
+
+{auto_analyst.DATA_ONLY_RULES}
+
+Cover, using only the numbers above:
+1. What this column actually contains.
+2. The pattern that dominates it.
+3. Anything in it that looks wrong or risky.
+4. One thing the business should do about it.
+"""
                 try:
                     model = genai.GenerativeModel(selected_model)
-                    response = model.generate_content(prompt)
-                    st.success(response.text)
+                    st.markdown(model.generate_content(prompt).text)
                 except Exception as e:
                     st.error(f"AI analysis failed: {e}")
 
@@ -552,11 +562,22 @@ if master_df is not None and not master_df.empty:
     st.subheader("💬 Custom Chat")
     user_question = st.text_input("Ask any custom question about the entire dataset...")
     if user_question and API_KEY:
-        with st.spinner("Thinking..."):
+        with st.spinner("Reading your data..."):
             try:
+                digest = auto_analyst.build_data_digest(
+                    master_df, auto_analyst.profile_dataframe(master_df)
+                )
+                chat_prompt = f"""
+You are answering a question about the user's own dataset.
+
+DATA SUMMARY
+{digest}
+
+{auto_analyst.DATA_ONLY_RULES}
+
+QUESTION: {user_question}
+"""
                 model = genai.GenerativeModel(selected_model)
-                chat_prompt = f"Data overview (Columns: {', '.join(master_df.columns)}). User Question: {user_question}"
-                reply = model.generate_content(chat_prompt)
-                st.success(reply.text)
+                st.markdown(model.generate_content(chat_prompt).text)
             except Exception as e:
                 st.error(f"AI chat failed: {e}")

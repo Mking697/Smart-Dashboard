@@ -25,6 +25,7 @@ SUITES = [
     ("test_auth",    "Signup, OTP, login, lockout, abuse guards"),
     ("test_table",   "Filters, pivot correctness, export"),
     ("test_html",    "Markup renders as HTML, buttons stay readable"),
+    ("test_pdf",     "PDF export: capture mode, one report vs all"),
 ]
 
 

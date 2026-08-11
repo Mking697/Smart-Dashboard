@@ -15,3 +15,9 @@ google-api-python-client>=2.150
 
 # Country name/code normalisation for the world map
 pycountry>=24.0
+
+# PDF report export - Kaleido renders charts to PNG (headless browser),
+# fpdf2 writes the document. Both avoid the external binaries that
+# pdfkit/weasyprint need and that will not install on a small server.
+kaleido>=1.0
+fpdf2>=2.7

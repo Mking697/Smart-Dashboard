@@ -41,6 +41,7 @@ Real people can sign up. Anything merged to `main` and pulled is live.
 | `data_table.py` | The raw rows: filters, a pivot builder, a fixed-size scrollable grid, CSV export. |
 | `theme.py` | The whole visual system - design tokens, Streamlit component CSS, Plotly template. |
 | `sample_data.py` | Deterministic demo workbook so the product can be seen without uploading. |
+| `report_export.py` | Renders the reports to PDF via Kaleido + fpdf2. Built from the same code as the page. |
 | `google_sheets.py` | Google Sheets connector. Public sheets via XLSX export, private sheets via service account. Raises `SheetAccessError(msg, hint)`. |
 | `geo_maps.py` | All map rendering. Detects what a location column *is*, then draws the right map. |
 | `geo_assets.py` | India boundary data + name resolution (states, districts, country codes, centroids). |
@@ -136,9 +137,25 @@ a visitor with no spreadsheet can see the whole product. Shaped to exercise
 everything: measures, dimensions, a timeline with a festive lift, and cities and
 states the map can actually place.
 
-### 7. Gemini AI
+### 7. PDF export (`report_export.py`)
+Scope is either one report or all of them. Reports run inside
+`auto_analyst.capturing()`, a thread-local buffer that collects headings, charts,
+KPIs and the plain-English lines instead of drawing them — so the PDF is built by
+the same code as the page and cannot drift from it. Kaleido renders each chart
+through a headless browser at roughly **4 seconds each** (9s for one report, 44s
+for all eight locally, slower on the t3.micro), hence the progress bar and the
+single-report default.
+
+### 8. Gemini AI
 Sidebar model picker, micro-level column deep dive, free-form chat, and the
 Auto Analyst briefing. All calls wrapped in try/except.
+
+Both the deep dive and the chat are **grounded**: they receive
+`auto_analyst.build_data_digest()` — real distributions, totals and value counts —
+plus `DATA_ONLY_RULES`, which forbids outside knowledge, Excel/SQL/Python
+tutorials and asking the user to paste their data. Before this the chat was sent
+nothing but column names, so it could not answer and explained how to do it
+yourself in Excel instead.
 
 ---
 
@@ -197,7 +214,15 @@ Auto Analyst briefing. All calls wrapped in try/except.
     `stDownloadButton` and `stFormSubmitButton`; the login button is the third kind,
     which the first fix missed. Never put a blanket `[data-testid="stSidebar"] *`
     colour rule back — it repaints button labels too.
-15. **Never raise inside `auth._connect()`.** The context manager commits only when
+15. **A regex that rewrites call sites will rewrite the function it defines.**
+    Routing `st.markdown("##### …")` through a new `chart_heading()` helper also
+    rewrote the line *inside* `chart_heading`, so it called itself — every report
+    died with `RecursionError`. The test caught it. Check the definition after any
+    mechanical rewrite.
+16. **fpdf2's core fonts are Latin-1 only.** One em dash in a running header
+    aborts the export on page two. Everything written to the PDF goes through
+    `report_export._ascii()`, including the title held for the header.
+17. **Never raise inside `auth._connect()`.** The context manager commits only when
     the block exits cleanly, so raising after a write rolls it back. This silently
     disabled the OTP attempt counter - every wrong guess reported "4 attempts left"
     and a six-digit code was open to unlimited brute force. `verify_otp` now decides
@@ -223,11 +248,12 @@ hero and sample data → data table with pivot.
 
 **Agreed with the user as the next piece of work: 1-Click PDF Report Export.**
 
-1. **1-Click PDF Report Export.** Render Plotly figures to PNG with **Kaleido**,
-   then write the document with **ReportLab or fpdf2** — both pure Python.
-   `pdfkit`/`weasyprint` need external binaries and will not install cleanly on the
-   1 GB t3.micro. Include the KPIs, the charts and the AI insight text. Watch
-   memory: Kaleido spawns a browser process on a box with 1 GB plus 2 GB of swap.
+1. ~~1-Click PDF Report Export~~ — **done**. See `report_export.py`.
+   **Not yet verified on the server:** Kaleido spawns a Chrome process, and the
+   t3.micro has 1 GB of RAM plus 2 GB of swap. Watch `journalctl -u dashboard`
+   for an OOM kill the first time someone exports all reports there. If it does
+   fall over, the fix is to export one report at a time, or move the box up a
+   size.
 2. **Automated Email Reporting (Triggers).** User picks Hourly/Daily/Monthly + an
    email address. Streamlit reruns per interaction and cannot host a scheduler, so
    run **APScheduler in a separate `scheduler.py` process** that re-fetches the
