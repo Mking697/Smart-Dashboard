@@ -110,4 +110,53 @@ pdf_emoji = report_export.build_pdf(df, one, sheet_name="Sales — 2025", title=
 print(f"  PDF still built: {len(pdf_emoji):,} bytes")
 assert pdf_emoji.startswith(b"%PDF")
 
+print("\n" + "=" * 74)
+print("PART 6 — NOTHING IS WRITTEN OFF THE EDGE OF THE PAGE")
+print("=" * 74)
+# fpdf2 leaves the cursor at the right-hand edge of a multi_cell by default, so
+# a run of them walks off the page: the second block was clipped to a few
+# characters and the third vanished entirely. This shipped once.
+probe = report_export.ReportPDF(title="Probe", subtitle="probe")
+probe.add_page()
+report_export._report_header(probe, {
+    "title": "📊 Business Overview",
+    "question": "How is the business doing overall, and who contributes most?",
+    "why": "Every dataset has a headline number and a biggest contributor.",
+})
+print(f"  cursor x after the header: {probe.get_x():.1f}mm "
+      f"(left margin is {report_export.MARGIN}mm)")
+assert probe.get_x() == report_export.MARGIN, "the cursor drifted off the left margin"
+
+for kind, payload in [("heading", "Chart 1 - a heading"),
+                      ("explain", "An explanation line."),
+                      ("takeaway", "A finding.")]:
+    report_export._write_block(probe, kind, payload)
+    assert probe.get_x() == report_export.MARGIN, f"{kind} left the cursor adrift"
+print("  every block returns to the left margin")
+
+try:
+    from pypdf import PdfReader
+
+    reader = PdfReader(out)
+    page_two = reader.pages[1].extract_text() or ""
+    for needle in ["Why this report", "contributes most"]:
+        found = needle in page_two
+        print(f"  [{'OK' if found else 'CLIPPED'}] {needle!r} survives on the report page")
+        assert found, f"{needle!r} was clipped off the page"
+
+    width = float(reader.pages[1].mediabox.width)          # points
+    right_edge = width - report_export.MARGIN * 72 / 25.4
+    furthest = 0.0
+
+    def watch(text, cm, tm, font, size):
+        global furthest
+        if text.strip():
+            furthest = max(furthest, tm[4])       # where the glyphs start, in points
+
+    reader.pages[1].extract_text(visitor_text=watch)
+    print(f"  furthest text starts at {furthest:.0f}pt, right margin is {right_edge:.0f}pt")
+    assert furthest < right_edge, "text starts beyond the right margin - it is being clipped"
+except ImportError:
+    print("  pypdf not installed - skipping the clipping check")
+
 print("\nALL PDF EXPORT CHECKS PASSED")

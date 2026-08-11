@@ -29,6 +29,13 @@ CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN
 
 CHART_PX = (1100, 620)    # rendered size before scaling into the page
 CHART_SCALE = 2
+CHART_MM = CONTENT_WIDTH * CHART_PX[1] / CHART_PX[0]    # its height on the page
+PAGE_FLOOR = 22           # millimetres kept clear at the foot of a page
+
+# fpdf2 leaves the cursor at the right-hand edge of a multi_cell by default, so a
+# second one starting there is squeezed against the page edge and its text is
+# clipped away. Every multi_cell in this file returns to the left margin instead.
+FLOW = {"new_x": "LMARGIN", "new_y": "NEXT"}
 
 INK = (30, 58, 138)
 BODY = (44, 62, 93)
@@ -58,12 +65,16 @@ class ReportPDF(FPDF):
     def header(self):
         if self.page_no() == 1:
             return
+        # Explicit halves rather than two zero-width cells: a zero-width cell
+        # takes its size from wherever the cursor happens to be, which is the
+        # same guesswork that once pushed body text off the right of the page.
+        half = CONTENT_WIDTH / 2
         self.set_font("Helvetica", "B", 9)
         self.set_text_color(*INK)
-        self.cell(0, 6, self.report_title, align="L")
+        self.cell(half, 6, self.report_title, align="L")
         self.set_font("Helvetica", "", 8)
         self.set_text_color(*MUTED)
-        self.cell(0, 6, "Autolyst", align="R", new_x="LMARGIN", new_y="NEXT")
+        self.cell(half, 6, "Autolyst", align="R", new_x="LMARGIN", new_y="NEXT")
         self.set_draw_color(*RULE)
         self.line(MARGIN, 20, PAGE_WIDTH - MARGIN, 20)
         self.ln(6)
@@ -106,7 +117,7 @@ def _cover(pdf, title, subtitle, rows, columns, sheet_name):
     pdf.set_y(70)
     pdf.set_font("Helvetica", "B", 19)
     pdf.set_text_color(*INK)
-    pdf.multi_cell(CONTENT_WIDTH, 9, _ascii(title))
+    pdf.multi_cell(CONTENT_WIDTH, 9, _ascii(title), **FLOW)
     pdf.ln(4)
 
     pdf.set_font("Helvetica", "", 10)
@@ -162,12 +173,17 @@ def _kpi_strip(pdf, kpis):
         pdf.set_y(top + 22)
 
 
+def _room_left(pdf):
+    """Millimetres of usable page still below the cursor."""
+    return pdf.h - PAGE_FLOOR - pdf.get_y()
+
+
 def _write_block(pdf, kind, payload):
     if kind == "heading":
         pdf.ln(2)
         pdf.set_font("Helvetica", "B", 11)
         pdf.set_text_color(*INK)
-        pdf.multi_cell(CONTENT_WIDTH, 6, _strip_markdown(payload))
+        pdf.multi_cell(CONTENT_WIDTH, 6, _strip_markdown(payload), **FLOW)
         pdf.ln(1)
 
     elif kind == "chart":
@@ -184,8 +200,7 @@ def _write_block(pdf, kind, payload):
                 "    ~/Smart-Dashboard/deploy/install-pdf.sh\n\n"
                 f"Underlying error: {error}"
             ) from error
-        height = CONTENT_WIDTH * CHART_PX[1] / CHART_PX[0]
-        if pdf.get_y() + height > pdf.h - 22:
+        if _room_left(pdf) < CHART_MM:
             pdf.add_page()
         pdf.image(io.BytesIO(png), x=MARGIN, w=CONTENT_WIDTH)
         pdf.ln(3)
@@ -193,15 +208,49 @@ def _write_block(pdf, kind, payload):
     elif kind == "explain":
         pdf.set_font("Helvetica", "I", 9)
         pdf.set_text_color(*MUTED)
-        pdf.multi_cell(CONTENT_WIDTH, 4.6, "How to read this: " + _strip_markdown(payload))
+        pdf.multi_cell(CONTENT_WIDTH, 4.6,
+                       "How to read this: " + _strip_markdown(payload), **FLOW)
         pdf.ln(2)
 
     elif kind == "takeaway":
         text = "What it means: " + _strip_markdown(payload)
         pdf.set_font("Helvetica", "B", 9.5)
         pdf.set_text_color(*TEAL)
-        pdf.multi_cell(CONTENT_WIDTH, 5, text)
+        pdf.multi_cell(CONTENT_WIDTH, 5, text, **FLOW)
         pdf.ln(3)
+
+
+def _write_blocks(pdf, blocks):
+    """Write the captured blocks in order, keeping a heading with its chart.
+
+    A chart that does not fit starts a new page. Without the look-ahead the
+    heading it belongs to is left stranded at the foot of the previous one.
+    """
+    for index, (kind, payload) in enumerate(blocks):
+        if kind == "heading":
+            following = blocks[index + 1][0] if index + 1 < len(blocks) else None
+            if following == "chart" and _room_left(pdf) < CHART_MM + 12:
+                pdf.add_page()
+        _write_block(pdf, kind, payload)
+
+
+def _report_header(pdf, scenario):
+    """The title, the question it answers, and why it was built."""
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_text_color(*INK)
+    pdf.multi_cell(CONTENT_WIDTH, 8, _strip_markdown(scenario["title"]), **FLOW)
+
+    question = scenario.get("question")
+    if question:
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(*BODY)
+        pdf.multi_cell(CONTENT_WIDTH, 5.5, _strip_markdown(question), **FLOW)
+
+    pdf.set_font("Helvetica", "I", 8.5)
+    pdf.set_text_color(*MUTED)
+    pdf.multi_cell(CONTENT_WIDTH, 4.5,
+                   "Why this report: " + _strip_markdown(scenario["why"]), **FLOW)
+    pdf.ln(3)
 
 
 def build_pdf(dataframe, scenarios, sheet_name=None, title=None, on_progress=None):
@@ -233,27 +282,12 @@ def build_pdf(dataframe, scenarios, sheet_name=None, title=None, on_progress=Non
                 blocks.append(("explain", f"This report could not be built: {error}"))
 
         pdf.add_page()
-        pdf.set_font("Helvetica", "B", 16)
-        pdf.set_text_color(*INK)
-        pdf.multi_cell(CONTENT_WIDTH, 8, _strip_markdown(scenario["title"]))
-
-        question = scenario.get("question")
-        if question:
-            pdf.set_font("Helvetica", "", 10)
-            pdf.set_text_color(*BODY)
-            pdf.multi_cell(CONTENT_WIDTH, 5.5, _strip_markdown(question))
-
-        pdf.set_font("Helvetica", "I", 8.5)
-        pdf.set_text_color(*MUTED)
-        pdf.multi_cell(CONTENT_WIDTH, 4.5, "Why this report: " + _strip_markdown(scenario["why"]))
-        pdf.ln(3)
+        _report_header(pdf, scenario)
 
         kpis = [payload for kind, payload in blocks if kind == "kpi"]
         _kpi_strip(pdf, kpis)
 
-        for kind, payload in blocks:
-            if kind != "kpi":
-                _write_block(pdf, kind, payload)
+        _write_blocks(pdf, [block for block in blocks if block[0] != "kpi"])
 
     if on_progress:
         on_progress(total, total, "Writing the document")

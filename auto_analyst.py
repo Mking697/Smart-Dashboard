@@ -953,7 +953,9 @@ def render_sheet_sections(sheets, key_prefix, ai_callback=None):
     names = list(sheets.keys())
 
     if len(names) == 1:
-        render_auto_dashboard(sheets[names[0]], key_prefix, ai_callback)
+        # Pass the name even with one sheet - it titles the PDF and names its file.
+        render_auto_dashboard(sheets[names[0]], key_prefix, ai_callback,
+                              sheet_name=names[0])
         return
 
     st.info(

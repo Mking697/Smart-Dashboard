@@ -222,7 +222,20 @@ yourself in Excel instead.
 16. **fpdf2's core fonts are Latin-1 only.** One em dash in a running header
     aborts the export on page two. Everything written to the PDF goes through
     `report_export._ascii()`, including the title held for the header.
-17. **Never raise inside `auth._connect()`.** The context manager commits only when
+17. **fpdf2 leaves the cursor at the *right* edge of a `multi_cell`.** Its default
+    is `new_x="RIGHT"`, so two `multi_cell`s in a row walk off the page: the second
+    is squeezed against the right margin and clipped to a few characters, the third
+    lands past the page edge and never appears. This shipped — the report page read
+    `How is th` and had no "Why this report" line at all. Every `multi_cell` in
+    `report_export.py` now passes `**FLOW` (`new_x="LMARGIN", new_y="NEXT"`), and
+    `test_pdf` PART 6 walks the page's text operators to assert nothing starts
+    beyond the right margin. Zero-width `cell()` calls have the same failing —
+    they size themselves from wherever the cursor is — so the running header uses
+    explicit halves.
+18. **A chart heading must not be orphaned.** A chart that does not fit starts a
+    new page, which used to strand its heading at the foot of the previous one.
+    `_write_blocks` looks one block ahead and breaks the page *before* the heading.
+19. **Never raise inside `auth._connect()`.** The context manager commits only when
     the block exits cleanly, so raising after a write rolls it back. This silently
     disabled the OTP attempt counter - every wrong guess reported "4 attempts left"
     and a six-digit code was open to unlimited brute force. `verify_otp` now decides
