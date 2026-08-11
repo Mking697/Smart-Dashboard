@@ -36,6 +36,7 @@ Real people can sign up. Anything merged to `main` and pulled is live.
 | File | Responsibility |
 |---|---|
 | `app.py` | Orchestrator only: data-source panels, cleaning report, workspace/tabs, manual dashboard, AI deep-dive + chat. |
+| `capture.py` | The thread-local buffer that collects a report instead of drawing it. Streamlit-free, so `geo_maps` can fill it too. |
 | `auth.py` | Signup, email OTP verification, login, and the Streamlit gate in front of everything. |
 | `data_cleaner.py` | Turns an unmanaged sheet into a usable table, and reports every change it made. |
 | `data_table.py` | The raw rows: filters, a pivot builder, a fixed-size scrollable grid, CSV export. |
@@ -49,10 +50,11 @@ Real people can sign up. Anything merged to `main` and pulled is live.
 | `assets/india_districts.geojson` | 4 MB district-level India boundaries. **Includes Jammu & Kashmir and Ladakh.** |
 | `deploy/aws-setup.sh` | One-command provision of a fresh Ubuntu box. Refuses to run where a site exists. |
 | `deploy/add-domain.sh` | Points Nginx at a domain and obtains the HTTPS certificate. Checks DNS first. |
-| `tests/` | Nine suites plus `run_all.py`. No framework — plain scripts that stub Streamlit. |
+| `tests/` | Ten suites plus `run_all.py`. No framework — plain scripts that stub Streamlit. |
 
 **Import direction:** `app.py` → `auto_analyst` → `geo_maps` → `geo_assets`.
-Never import backwards; `geo_assets` must stay Streamlit-free.
+Never import backwards; `geo_assets` and `capture` must stay Streamlit-free.
+`capture` sits to the side — anything may import it, it imports nothing.
 
 ---
 
@@ -118,6 +120,27 @@ Executive Summary · Trends · Rankings & 80/20 · Distribution & Outliers ·
 Relationships · Cross-Tab Heatmap · Geography · Data Quality.
 Each tab shows a "why this view" line. AI briefing sends **stats only, never raw rows**.
 
+It also refuses to report nonsense, which is most of what separates it from a
+chart tool:
+- **Rates are averaged, never totalled.** `is_rate()` catches Unit Price, Growth
+  Rate, Rating and friends; `agg_for()` turns that into `mean` vs `sum` for every
+  groupby. The headline once read "Total Unit Price 784,275". Rates also sort
+  last in `rank_measures`, and the executive split falls back to record counts
+  when only rates exist — a share of an average is not a thing.
+- **80/20 is skipped for a rate.** A cumulative share across averages looks
+  convincing and means nothing.
+- **Stray dates do not flatten a chart.** `usable_date_window()` — one 1900
+  placeholder made the axis span a century and squashed a year of trading into
+  one spike. Only fires when an axis is genuinely distorted, never drops more
+  than 5% of rows, and widens by a full inner span so the newest real dates
+  survive (the headline is "the most recent period").
+- **Empty rows and columns leave the cross-tab.** A grid reading 0.00 nine
+  squares in ten hides its own pattern; capped at 12×12 and it says what it hid.
+- **`find_misplaced_values()`** spots a value that is rare in the column it
+  appears in and common in another — an order status sitting in Region because a
+  row slipped a cell. Skips column pairs that share over half their vocabulary,
+  so Billing City vs Shipping City is not accused of anything.
+
 ### 4. Data Table (`data_table.py`)
 Per sheet: a search box matching every column, per-column filters that pick their
 control from the column type (range slider / date range / checklist), a column
@@ -138,13 +161,22 @@ everything: measures, dimensions, a timeline with a festive lift, and cities and
 states the map can actually place.
 
 ### 7. PDF export (`report_export.py`)
-Scope is either one report or all of them. Reports run inside
-`auto_analyst.capturing()`, a thread-local buffer that collects headings, charts,
-KPIs and the plain-English lines instead of drawing them — so the PDF is built by
-the same code as the page and cannot drift from it. Kaleido renders each chart
-through a headless browser at roughly **4 seconds each** (9s for one report, 44s
-for all eight locally, slower on the t3.micro), hence the progress bar and the
+Scope is either one report or all of them. Reports run inside `capturing()`, the
+thread-local buffer in `capture.py` that collects headings, charts, KPIs and the
+plain-English lines instead of drawing them — so the PDF is built by the same code
+as the page and cannot drift from it. Kaleido renders each chart through a
+headless browser at roughly **4 seconds each** (12s for one report, 58s for all
+eight locally, slower on the t3.micro), hence the progress bar and the
 single-report default.
+
+Every report is captured **before** any of it is written, because the
+**Executive Summary** page gathers the findings of all of them and has to sit at
+the front. It is skipped for a single-report export. Progress is reported during
+the write pass, not the capture pass — that is where the time actually goes.
+
+`geo_maps` fills the same buffer, so **maps reach the PDF**; and while a capture
+is open every widget stands aside and its default is used, so an export neither
+drops selectboxes onto the page nor depends on what the user last picked.
 
 ### 8. Gemini AI
 Sidebar model picker, micro-level column deep dive, free-form chat, and the
@@ -235,7 +267,18 @@ yourself in Excel instead.
 18. **A chart heading must not be orphaned.** A chart that does not fit starts a
     new page, which used to strand its heading at the foot of the previous one.
     `_write_blocks` looks one block ahead and breaks the page *before* the heading.
-19. **Never raise inside `auth._connect()`.** The context manager commits only when
+19. **A chart that is drawn outside the capture helpers never reaches the PDF.**
+    `geo_maps` called `st.plotly_chart` directly, so the Location Map exported as
+    a heading and an explanation with nothing between them. Both call sites now
+    go through `capture.add("chart", fig)` first. `test_analysis` PART 4 asserts
+    every scenario captures at least one chart — add a new chart anywhere and it
+    must go through a capture helper.
+20. **An export must not draw widgets.** A captured report still runs its real
+    code, so a `st.selectbox` inside a scenario put a picker on the page mid-export
+    and made the PDF depend on whatever was last selected. `pick()` in
+    `auto_analyst` and the `capture.active()` guards in `geo_maps` return the
+    default instead. Any new widget inside a scenario needs the same treatment.
+21. **Never raise inside `auth._connect()`.** The context manager commits only when
     the block exits cleanly, so raising after a write rolls it back. This silently
     disabled the OTP attempt counter - every wrong guess reported "4 attempts left"
     and a six-digit code was open to unlimited brute force. `verify_otp` now decides
@@ -246,7 +289,7 @@ yourself in Excel instead.
 
 ## Current State
 
-Live, in production, with signups open. **All 9 test suites pass**, the app boots
+Live, in production, with signups open. **All 10 test suites pass**, the app boots
 clean, and https://autolyst.online serves 200 over a valid certificate. PDF export
 has been exercised on the server, not only locally.
 
@@ -310,7 +353,7 @@ break the existing AI or charting logic.
 ```bash
 venv/Scripts/python.exe -m pip install -r requirements.txt
 venv/Scripts/streamlit.exe run app.py        # http://localhost:8501
-venv/Scripts/python.exe tests/run_all.py     # all nine suites, one line each
+venv/Scripts/python.exe tests/run_all.py     # all ten suites, one line each
 ```
 
 **Run `tests/run_all.py` before every push.** No framework to install — each suite
@@ -328,7 +371,8 @@ frames, the column roles, the pivot totals, the auth guards.
 | `test_auth` | Signup, OTP expiry and attempt limits, login lockout |
 | `test_table` | Filters, pivot totals checked against the source, export |
 | `test_html` | Markup renders as HTML, button labels stay readable |
-| `test_pdf` | Capture mode, one report vs all, nothing clipped off the page |
+| `test_pdf` | Capture mode, one report vs all, summary page, nothing clipped |
+| `test_analysis` | Rates vs totals, date windows, misplaced values, map capture |
 
 Four suites want a messy workbook. They skip cleanly without one; set
 `SAMPLE_WORKBOOK` to an `.xlsx` path to run them.

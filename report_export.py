@@ -253,13 +253,72 @@ def _report_header(pdf, scenario):
     pdf.ln(3)
 
 
+def _summary_page(pdf, captured):
+    """The findings from every report, on one page at the front.
+
+    Thirteen pages is a lot to read before knowing whether anything needs
+    attention. Each report already states its finding in plain English, so they
+    are simply gathered here, in the order the reports appear.
+    """
+    findings = [
+        (scenario["title"], [payload for kind, payload in blocks if kind == "takeaway"])
+        for scenario, blocks in captured
+    ]
+    findings = [(title, lines) for title, lines in findings if lines]
+    if not findings:
+        return
+
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_text_color(*INK)
+    pdf.multi_cell(CONTENT_WIDTH, 9, "Executive Summary", **FLOW)
+
+    pdf.set_font("Helvetica", "I", 9)
+    pdf.set_text_color(*MUTED)
+    pdf.multi_cell(CONTENT_WIDTH, 4.6,
+                   "Everything the reports found, in one place. Each line comes from the "
+                   "report named above it - turn to that page for the chart behind it.",
+                   **FLOW)
+    pdf.ln(4)
+
+    for title, lines in findings:
+        pdf.set_font("Helvetica", "B", 9.5)
+        pdf.set_text_color(*TEAL)
+        pdf.multi_cell(CONTENT_WIDTH, 5, _strip_markdown(title), **FLOW)
+
+        pdf.set_font("Helvetica", "", 9.5)
+        pdf.set_text_color(*BODY)
+        for line in lines:
+            # Indent the body of a wrapped bullet, not just its first line.
+            pdf.set_x(MARGIN + 4)
+            pdf.multi_cell(CONTENT_WIDTH - 4, 4.8, "- " + _strip_markdown(line), **FLOW)
+        pdf.ln(2.5)
+
+
 def build_pdf(dataframe, scenarios, sheet_name=None, title=None, on_progress=None):
     """Render the given scenarios into PDF bytes.
 
-    `on_progress(done, total, label)` is called as each report is captured, so a
+    `on_progress(done, total, label)` is called as each report is written, so a
     slow export can show its progress instead of appearing to hang.
+
+    Every report is captured before any of it is written, because the summary
+    page is built from findings that only exist once all of them have run - and
+    it has to sit at the front.
     """
     profiles = auto_analyst.profile_dataframe(dataframe)
+    total = len(scenarios)
+
+    if on_progress:
+        on_progress(0, total, "Reading the data")
+
+    captured = []
+    for index, scenario in enumerate(scenarios, start=1):
+        with auto_analyst.capturing() as blocks:
+            try:
+                scenario["render"](dataframe, profiles, f"pdf_{index}")
+            except Exception as error:                      # a report that cannot
+                blocks.append(("explain", f"This report could not be built: {error}"))
+        captured.append((scenario, list(blocks)))
 
     pdf = ReportPDF(
         title=title or "Data Report",
@@ -269,17 +328,15 @@ def build_pdf(dataframe, scenarios, sheet_name=None, title=None, on_progress=Non
            "Automated report - every chart explained in plain English",
            len(dataframe), len(dataframe.columns), sheet_name)
 
-    total = len(scenarios)
+    # One report speaks for itself; a summary of it would just repeat the page.
+    if total > 1:
+        _summary_page(pdf, captured)
 
-    for index, scenario in enumerate(scenarios, start=1):
+    for index, (scenario, blocks) in enumerate(captured, start=1):
+        # Progress is reported here rather than during capture because this is
+        # where the time goes - every chart is a browser screenshot.
         if on_progress:
             on_progress(index - 1, total, scenario["title"])
-
-        with auto_analyst.capturing() as blocks:
-            try:
-                scenario["render"](dataframe, profiles, f"pdf_{index}")
-            except Exception as error:                      # a report that cannot
-                blocks.append(("explain", f"This report could not be built: {error}"))
 
         pdf.add_page()
         _report_header(pdf, scenario)

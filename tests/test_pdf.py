@@ -1,4 +1,5 @@
 """PDF export: capture mode, one report vs all, and a readable document."""
+import io
 import os
 import sys
 import time
@@ -75,7 +76,8 @@ for done, total, label in progress[:4]:
 
 assert pdf_all.startswith(b"%PDF")
 assert len(pdf_all) > len(pdf_one), "the full report should be larger than one report"
-assert len(progress) == len(scenarios) + 1, "progress should report every report plus the write"
+# One call before the capture pass, one per report as it is written, one at the end.
+assert len(progress) == len(scenarios) + 2, "progress should cover capture, every report and the write"
 
 print("\n" + "=" * 74)
 print("PART 4 — THE DOCUMENT IS READABLE")
@@ -95,6 +97,18 @@ try:
         print(f"  [{'OK' if found else 'MISSING'}] {needle!r} appears in the text")
         assert found, f"{needle} missing from the PDF text"
     assert len(reader.pages) >= len(scenarios), "expected at least one page per report"
+
+    # The summary sits at the front, built from the findings of every report.
+    summary = reader.pages[1].extract_text() or ""
+    print(f"  [{'OK' if 'Executive Summary' in summary else 'MISSING'}] page 2 is the summary")
+    assert "Executive Summary" in summary, "the summary page is missing"
+    assert "Business Overview" in summary, "the summary should name the reports it draws from"
+
+    one_page = PdfReader(io.BytesIO(pdf_one))
+    single = "\n".join((page.extract_text() or "") for page in one_page.pages)
+    print(f"  [{'OK' if 'Executive Summary' not in single else 'WRONG'}] "
+          "a single-report export has no summary page")
+    assert "Executive Summary" not in single, "one report does not need summarising"
 except ImportError:
     print("  pypdf not installed - skipping the text check")
 
@@ -138,24 +152,29 @@ try:
     from pypdf import PdfReader
 
     reader = PdfReader(out)
-    page_two = reader.pages[1].extract_text() or ""
+    whole = "\n".join((page.extract_text() or "") for page in reader.pages)
     for needle in ["Why this report", "contributes most"]:
-        found = needle in page_two
-        print(f"  [{'OK' if found else 'CLIPPED'}] {needle!r} survives on the report page")
+        found = needle in whole
+        print(f"  [{'OK' if found else 'CLIPPED'}] {needle!r} survives in the document")
         assert found, f"{needle!r} was clipped off the page"
 
-    width = float(reader.pages[1].mediabox.width)          # points
-    right_edge = width - report_export.MARGIN * 72 / 25.4
-    furthest = 0.0
+    # Walk every page, not just one: the failure was three lines marching off
+    # the right-hand edge, and it happened on each report page alike.
+    right_edge = float(reader.pages[0].mediabox.width) - report_export.MARGIN * 72 / 25.4
+    furthest, worst_page = 0.0, 0
 
-    def watch(text, cm, tm, font, size):
-        global furthest
-        if text.strip():
-            furthest = max(furthest, tm[4])       # where the glyphs start, in points
+    for number, page in enumerate(reader.pages, start=1):
+        def watch(text, cm, tm, font, size, _page=number):
+            global furthest, worst_page
+            if text.strip() and tm[4] > furthest:
+                furthest, worst_page = tm[4], _page
 
-    reader.pages[1].extract_text(visitor_text=watch)
-    print(f"  furthest text starts at {furthest:.0f}pt, right margin is {right_edge:.0f}pt")
-    assert furthest < right_edge, "text starts beyond the right margin - it is being clipped"
+        page.extract_text(visitor_text=watch)
+
+    print(f"  furthest text starts at {furthest:.0f}pt (page {worst_page}); "
+          f"right margin is {right_edge:.0f}pt")
+    assert furthest < right_edge, \
+        f"text on page {worst_page} starts beyond the right margin - it is being clipped"
 except ImportError:
     print("  pypdf not installed - skipping the clipping check")
 

@@ -10,14 +10,13 @@ Every scenario carries a "why" line, so the dashboard also explains itself.
 """
 
 import re
-import threading
-from contextlib import contextmanager
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+import capture
 import geo_maps
 import theme
 
@@ -31,6 +30,16 @@ MEASURE_HINTS = (
 IDENTIFIER_HINTS = ('id', 'code', 'uuid', 'guid', 'ref', 'number', 'no', 'key', 'sr', 'srno')
 
 DATE_HINTS = ('date', 'time', 'day', 'month', 'year', 'created', 'updated', 'timestamp', 'dob')
+
+# Measures that describe a rate rather than an amount. Adding them up produces a
+# number nobody can act on - the headline once read "Total Unit Price 784,275",
+# which is the sum of a per-unit figure and means nothing at all. These are
+# averaged instead. Kept deliberately narrow: "Discount" and "Margin" are just
+# as often absolute amounts, so they stay summed.
+RATE_HINTS = (
+    'unit price', 'unit cost', 'unit rate', 'per unit', 'price per', 'cost per',
+    'rate', 'percent', 'percentage', 'ratio', 'rating', 'score', 'average', 'avg',
+)
 
 PROFILE_SAMPLE_ROWS = 50_000
 PALETTE = theme.CATEGORICAL
@@ -67,73 +76,64 @@ def metric_label(metric):
 # Capture: the same report code either draws to the page or fills a buffer
 # --------------------------------------------------------------------------- #
 #
-# The PDF has to contain exactly what the screen shows, and the only way to keep
-# those two in step is to build both from one code path. Every scenario writes
-# through the four helpers below; when a capture buffer is active they append to
-# it and draw nothing.
-#
-# The buffer is thread-local because Streamlit serves each session on its own
-# thread - a module-level list would let one user's export collect another
-# user's charts.
+# Every scenario writes through the helpers below. The buffer itself lives in
+# `capture` so that `geo_maps` can fill it too without importing this module.
 
-_capture = threading.local()
-
-
-def _sink():
-    return getattr(_capture, "buffer", None)
-
-
-@contextmanager
-def capturing():
-    """Collect a report's charts and text instead of rendering them."""
-    _capture.buffer = []
-    try:
-        yield _capture.buffer
-    finally:
-        _capture.buffer = None
+capturing = capture.capturing
+_sink = capture.sink                    # kept for the tests, which assert on it
 
 
 def chart_heading(text):
     """The question a chart answers, above it."""
-    buffer = _sink()
-    if buffer is None:
+    if not capture.add("heading", text):
         st.markdown(f"##### {text}")
-    else:
-        buffer.append(("heading", text))
 
 
 def show_chart(fig, key):
-    buffer = _sink()
-    if buffer is None:
+    if not capture.add("chart", fig):
         st.plotly_chart(fig, use_container_width=True, key=key)
-    else:
-        buffer.append(("chart", fig))
 
 
 def show_kpi(slot, label, value, help_text=None):
-    buffer = _sink()
-    if buffer is None:
+    if not capture.add("kpi", (label, value)):
         slot.metric(label, value, help=help_text)
-    else:
-        buffer.append(("kpi", (label, value)))
 
 
 def explain(text):
     """One plain-English line under a chart telling the user how to read it."""
-    buffer = _sink()
-    if buffer is None:
+    if not capture.add("explain", text):
         st.caption(f"📖 **How to read this:** {text}")
-    else:
-        buffer.append(("explain", text))
 
 
 def takeaway(text):
     """The finding the chart actually shows, stated in words."""
-    buffer = _sink()
-    if buffer is None:
+    if not capture.add("takeaway", text):
         st.success(f"💡 **What it means:** {text}")
-    else:
-        buffer.append(("takeaway", text))
+
+
+def warn(text):
+    """A problem worth acting on.
+
+    Renders as a warning on screen but is captured exactly like a takeaway, so
+    the findings reach the PDF instead of being lost - the exported data-quality
+    report used to be a chart with no conclusions under it.
+    """
+    if not capture.add("takeaway", text):
+        st.warning("⚠️ " + text)
+
+
+def pick(label, options, key, format_func=str):
+    """A selectbox that stands aside during an export.
+
+    A captured report must not draw widgets - they would appear on the page
+    while the PDF is being built - so the first option, which is what the
+    selectbox would show anyway, is returned instead.
+    """
+    if not options:
+        return None
+    if capture.active():
+        return options[0]
+    return st.selectbox(label, options, format_func=format_func, key=key)
 
 
 def pct(part, whole):
@@ -220,6 +220,7 @@ def profile_column(series, name):
             zeros=int((non_null == 0).sum()),
             negatives=int((non_null < 0).sum()),
             named_measure=any(h in lower for h in MEASURE_HINTS),
+            rate=is_rate(name),
         )
         return info
 
@@ -256,10 +257,90 @@ def by_role(profiles, *roles):
     return [p for p in profiles if p['role'] in roles]
 
 
+def is_rate(name):
+    """True for a measure that is a rate, where a total means nothing.
+
+    Matched on the readable name, so 'Q_UnitPrice' is caught the same as
+    'unit_price'. Word boundaries matter: 'rate' must not fire on 'Corporate'.
+    """
+    words = humanize(name).lower()
+    padded = f" {words} "
+    return any(
+        hint in words if " " in hint else f" {hint} " in padded
+        for hint in RATE_HINTS
+    )
+
+
+def agg_for(profiles, metric):
+    """'mean' for a rate column, 'sum' for a real measure.
+
+    Everything that groups a measure asks this first, so a per-unit price is
+    averaged across a group instead of being added up into a meaningless total.
+    """
+    profile = next((p for p in profiles if p['name'] == metric), None)
+    return 'mean' if profile and profile.get('rate') else 'sum'
+
+
+def agg_word(how):
+    """'Total' or 'Average', for chart titles and KPI labels."""
+    return "Average" if how == 'mean' else "Total"
+
+
+MAX_DATE_TRIM = 0.05        # never drop more than this share to tidy an axis
+
+
+def usable_date_window(dates):
+    """The date range worth plotting, or None when the whole range is fine.
+
+    One 1900 placeholder in an order-date column turns a year of trading into a
+    single spike at the right-hand edge: the axis spans a century, the monthly
+    grouper manufactures 1,400 empty buckets, and the real shape of the data
+    disappears. This finds the range the records actually live in.
+
+    It only fires when an axis is genuinely being distorted, and never discards
+    more than a twentieth of the rows - data that really is spread over decades
+    is left exactly as it is.
+    """
+    if len(dates) < 20:
+        return None
+
+    low, high = dates.quantile(0.01), dates.quantile(0.99)
+    inner_span = (high - low).days
+    full_span = (dates.max() - dates.min()).days
+
+    # Stragglers have to stretch the axis by a lot before it is worth cutting
+    # them: three times the span the bulk of the data occupies, and at least an
+    # extra year on top.
+    if inner_span <= 0 or full_span < max(inner_span * 3, inner_span + 365):
+        return None
+
+    # The quantiles find the bulk of the data, but cutting exactly there would
+    # also throw away the newest few days - and the trend chart's headline is
+    # "the most recent period", so those are the last rows that may be lost.
+    # Widening by a full inner span keeps everything near the real data and
+    # still leaves a placeholder from another century far outside.
+    margin = pd.Timedelta(days=max(inner_span, 30))
+    low, high = low - margin, high + margin
+
+    outside = int(((dates < low) | (dates > high)).sum())
+    if outside == 0 or outside > len(dates) * MAX_DATE_TRIM:
+        return None
+
+    return low, high
+
+
 def rank_measures(profiles):
-    """Most business-relevant measures first: named ones, then the most varied."""
+    """Most business-relevant measures first.
+
+    Rates sort last however well named they are: a report headlined by an
+    average unit price tells the reader far less than one headlined by revenue.
+    """
     measures = by_role(profiles, 'measure')
-    return sorted(measures, key=lambda p: (p.get('named_measure', False), p.get('std', 0)), reverse=True)
+    return sorted(
+        measures,
+        key=lambda p: (not p.get('rate', False), p.get('named_measure', False), p.get('std', 0)),
+        reverse=True,
+    )
 
 
 def rank_categories(profiles):
@@ -337,12 +418,15 @@ def _kpi_row(dataframe, profiles):
     show_kpi(tiles[0], "📊 Records", f"{len(dataframe):,}")
 
     for slot, measure in zip(tiles[1:], measures):
-        total = measure.get('total', 0)
         name = humanize(measure['name'])
+        if measure.get('rate'):
+            # A per-unit figure has no meaningful total, so headline the average.
+            value, word, note = measure.get('mean', 0), "Average", f"Highest: {measure.get('maximum', 0):,.2f}"
+        else:
+            value, word, note = measure.get('total', 0), "Total", f"Average per record: {measure.get('mean', 0):,.2f}"
         # "Total Total Amount" reads badly - do not prefix a name that already says it.
-        label = name if name.lower().startswith('total') else f"Total {name}"
-        show_kpi(slot, label, f"{total:,.0f}",
-                 f"Average per record: {measure.get('mean', 0):,.2f}")
+        label = name if name.lower().startswith(word.lower()) else f"{word} {name}"
+        show_kpi(slot, label, f"{value:,.0f}", note)
 
     if categories:
         primary = categories[0]
@@ -367,8 +451,13 @@ def scenario_executive(dataframe, profiles, key_prefix):
 
     dim_label = humanize(dimension)
 
-    if measures:
-        measure = measures[0]['name']
+    # This section splits a whole into shares, so it needs a measure that can be
+    # added up. A rate has no total to divide - "35% of the average unit price"
+    # is not a sentence - so fall back to counting records instead.
+    totalable = [m for m in measures if not m.get('rate')]
+
+    if totalable:
+        measure = totalable[0]['name']
         agg = dataframe.groupby(dimension, dropna=True)[measure].sum().sort_values(ascending=False).head(12).reset_index()
         value_col = measure
         value_label = humanize(measure)
@@ -414,11 +503,11 @@ def scenario_trend(dataframe, profiles, key_prefix):
     dates = by_role(profiles, 'date')
     measures = rank_measures(profiles)
 
-    date_col = st.selectbox("📅 Which date column?", [p['name'] for p in dates],
-                            format_func=humanize, key=f"auto_date_{key_prefix}")
+    date_col = pick("📅 Which date column?", [p['name'] for p in dates],
+                    f"auto_date_{key_prefix}", format_func=humanize)
     metric_options = [m['name'] for m in measures] + ["Record count"]
-    metric = st.selectbox("📈 What do you want to track?", metric_options,
-                          format_func=metric_label, key=f"auto_trendmetric_{key_prefix}")
+    metric = pick("📈 What do you want to track?", metric_options,
+                  f"auto_trendmetric_{key_prefix}", format_func=metric_label)
 
     frame = dataframe[[date_col] + ([metric] if metric != "Record count" else [])].copy()
     frame[date_col] = parse_dates(frame[date_col])
@@ -428,18 +517,29 @@ def scenario_trend(dataframe, profiles, key_prefix):
         st.info("No valid dates to plot.")
         return
 
+    window = usable_date_window(frame[date_col])
+    trimmed = 0
+    if window:
+        low, high = window
+        before = len(frame)
+        frame = frame[(frame[date_col] >= low) & (frame[date_col] <= high)]
+        trimmed = before - len(frame)
+
     span_days = (frame[date_col].max() - frame[date_col].min()).days
     freq, freq_label = ('D', 'Daily') if span_days <= 90 else (('W', 'Weekly') if span_days <= 730 else ('MS', 'Monthly'))
 
+    how = 'sum' if metric == "Record count" else agg_for(profiles, metric)
     grouper = pd.Grouper(key=date_col, freq=freq)
     if metric == "Record count":
         series = frame.groupby(grouper).size().reset_index(name='Value')
     else:
-        series = frame.groupby(grouper)[metric].sum().reset_index().rename(columns={metric: 'Value'})
+        series = frame.groupby(grouper)[metric].agg(how).reset_index().rename(columns={metric: 'Value'})
 
     series = series[series['Value'].notna()]
 
     label = metric_label(metric)
+    if how == 'mean':
+        label = f"Average {label}"
     chart_heading(f"📈 Chart — How has {label} changed over time?")
 
     fig = px.area(series, x=date_col, y='Value', markers=True,
@@ -448,8 +548,13 @@ def scenario_trend(dataframe, profiles, key_prefix):
                   labels={'Value': label, date_col: humanize(date_col)})
     fig.update_layout(height=420, hovermode='x unified')
     show_chart(fig, f"trend_area_{key_prefix}")
-    explain(f"Time runs left to right. The line going up means {label} is growing, "
-            "going down means it is falling. Hover any point to see that period's exact number.")
+    explain(
+        f"Time runs left to right. The line going up means {label} is growing, "
+        "going down means it is falling. Hover any point to see that period's exact number."
+        + (f" {trimmed} record(s) carried a date far outside this range — most likely a typo or "
+           f"a placeholder — and were left out so the chart is not squashed flat by them."
+           if trimmed else "")
+    )
 
     if len(series) >= 2:
         latest, previous = series['Value'].iloc[-1], series['Value'].iloc[-2]
@@ -474,17 +579,19 @@ def scenario_ranking(dataframe, profiles, key_prefix):
     categories = rank_categories(profiles)
     measures = rank_measures(profiles)
 
-    dimension = st.selectbox("🏷️ Rank which group?", [c['name'] for c in categories],
-                             format_func=humanize, key=f"auto_rankdim_{key_prefix}")
+    dimension = pick("🏷️ Rank which group?", [c['name'] for c in categories],
+                     f"auto_rankdim_{key_prefix}", format_func=humanize)
     metric_options = [m['name'] for m in measures] + ["Record count"]
-    metric = st.selectbox("📊 Rank them by what?", metric_options,
-                          format_func=metric_label, key=f"auto_rankmetric_{key_prefix}")
+    metric = pick("📊 Rank them by what?", metric_options,
+                  f"auto_rankmetric_{key_prefix}", format_func=metric_label)
 
     if metric == "Record count":
+        how = 'sum'
         agg = dataframe[dimension].value_counts().reset_index()
         agg.columns = [dimension, 'Value']
     else:
-        agg = dataframe.groupby(dimension)[metric].sum().sort_values(ascending=False).reset_index()
+        how = agg_for(profiles, metric)
+        agg = dataframe.groupby(dimension)[metric].agg(how).sort_values(ascending=False).reset_index()
         agg = agg.rename(columns={metric: 'Value'})
 
     agg = agg[agg['Value'].notna()].sort_values('Value', ascending=False)
@@ -497,6 +604,8 @@ def scenario_ranking(dataframe, profiles, key_prefix):
     left, right = st.columns([3, 2])
 
     dim_label, value_label = humanize(dimension), metric_label(metric)
+    if how == 'mean':
+        value_label = f"Average {value_label}"
 
     with left:
         chart_heading(f"🏆 Chart 1 — Your top {dim_label}s by {value_label}")
@@ -509,6 +618,18 @@ def scenario_ranking(dataframe, profiles, key_prefix):
         show_chart(fig, f"rank_bar_{key_prefix}")
         explain("The longest bar at the top is your best performer. "
                 "Bars are sorted, so you read this list from top to bottom.")
+
+    # 80/20 only means something when the values add up to a whole. Running a
+    # cumulative share across averages produces a line that looks right and says
+    # nothing, so that chart is simply not built for a rate.
+    if how == 'mean':
+        leader = agg.iloc[0]
+        takeaway(
+            f"**{leader[dimension]}** has the highest {value_label} at **{leader['Value']:,.2f}**, "
+            f"against an overall average of {agg['Value'].mean():,.2f}. "
+            "There is no 80/20 split to report here — averages do not add up to a total."
+        )
+        return
 
     with right:
         chart_heading("📉 Chart 2 — Do a few names carry the business?")
@@ -538,8 +659,8 @@ def scenario_ranking(dataframe, profiles, key_prefix):
 def scenario_distribution(dataframe, profiles, key_prefix):
     """Shape of each measure, plus the outliers hiding in it."""
     measures = rank_measures(profiles)
-    metric = st.selectbox("🔢 Which number do you want to examine?", [m['name'] for m in measures],
-                          format_func=humanize, key=f"auto_dist_{key_prefix}")
+    metric = pick("🔢 Which number do you want to examine?", [m['name'] for m in measures],
+                  f"auto_dist_{key_prefix}", format_func=humanize)
 
     values = pd.to_numeric(dataframe[metric], errors='coerce').dropna()
     if values.empty:
@@ -667,28 +788,53 @@ def scenario_crosstab(dataframe, profiles, key_prefix):
     categories = [c['name'] for c in rank_categories(profiles)]
     measures = rank_measures(profiles)
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        rows = st.selectbox("↕️ Down the side", categories, format_func=humanize,
-                            key=f"auto_ctrow_{key_prefix}")
-    with col2:
-        remaining = [c for c in categories if c != rows]
-        cols = st.selectbox("↔️ Across the top", remaining, format_func=humanize,
-                            key=f"auto_ctcol_{key_prefix}")
-    with col3:
-        metric = st.selectbox("🔢 Show me", [m['name'] for m in measures] + ["Record count"],
-                              format_func=metric_label, key=f"auto_ctmetric_{key_prefix}")
+    if capture.active():
+        rows = categories[0]
+        cols = next((c for c in categories if c != rows), None)
+        metric = ([m['name'] for m in measures] + ["Record count"])[0]
+    else:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            rows = pick("↕️ Down the side", categories,
+                        f"auto_ctrow_{key_prefix}", format_func=humanize)
+        with col2:
+            remaining = [c for c in categories if c != rows]
+            cols = pick("↔️ Across the top", remaining,
+                        f"auto_ctcol_{key_prefix}", format_func=humanize)
+        with col3:
+            metric = pick("🔢 Show me", [m['name'] for m in measures] + ["Record count"],
+                          f"auto_ctmetric_{key_prefix}", format_func=metric_label)
 
+    how = 'sum' if metric == "Record count" else agg_for(profiles, metric)
     if metric == "Record count":
         matrix = pd.crosstab(dataframe[rows], dataframe[cols])
     else:
         matrix = pd.pivot_table(dataframe, index=rows, columns=cols, values=metric,
-                                aggfunc='sum', fill_value=0)
+                                aggfunc=how, fill_value=0)
 
-    matrix = matrix.loc[matrix.sum(axis=1).sort_values(ascending=False).index[:20],
-                        matrix.sum(axis=0).sort_values(ascending=False).index[:20]]
+    # Rows and columns that hold nothing at all are dropped before anything is
+    # drawn. A grid reading 0.00 in nine squares out of ten hides the very
+    # pattern it exists to show, and an all-zero row is usually a value that
+    # belongs to a different column entirely - a shifted cell in the source
+    # sheet, not a real category.
+    empty_rows = int((matrix.abs().sum(axis=1) == 0).sum())
+    empty_cols = int((matrix.abs().sum(axis=0) == 0).sum())
+    matrix = matrix.loc[matrix.abs().sum(axis=1) > 0, matrix.abs().sum(axis=0) > 0]
+
+    if matrix.empty:
+        st.info("Every combination of these two columns is empty, so there is no grid to draw.")
+        return
+
+    # Past a dozen each way the squares are too small to read on a page or in
+    # the PDF, so only the busiest are kept.
+    top_n = 12
+    hidden = max(0, len(matrix.index) - top_n) + max(0, len(matrix.columns) - top_n)
+    matrix = matrix.loc[matrix.sum(axis=1).sort_values(ascending=False).index[:top_n],
+                        matrix.sum(axis=0).sort_values(ascending=False).index[:top_n]]
 
     row_label, col_label, value_label = humanize(rows), humanize(cols), metric_label(metric)
+    if how == 'mean':
+        value_label = f"Average {value_label}"
     chart_heading(f"🔥 Chart — Where does {value_label} pile up across {row_label} and {col_label}?")
 
     fig = px.imshow(matrix, text_auto='.3s', aspect='auto', color_continuous_scale='Blues',
@@ -696,9 +842,18 @@ def scenario_crosstab(dataframe, profiles, key_prefix):
                     labels=dict(x=col_label, y=row_label, color=value_label))
     fig.update_layout(height=520)
     show_chart(fig, f"crosstab_heatmap_{key_prefix}")
+    notes = []
+    if empty_rows or empty_cols:
+        parts = ([f"{empty_rows} {row_label}(s)"] if empty_rows else []) + \
+                ([f"{empty_cols} {col_label}(s)"] if empty_cols else [])
+        notes.append(f"{' and '.join(parts)} had no {value_label} at all and are not shown.")
+    if hidden:
+        notes.append(f"Only the busiest {top_n} each way are drawn.")
+
     explain(f"Every square is one {row_label} combined with one {col_label}. "
             "Darker squares hold more - the darkest square is your busiest combination, "
-            "and empty pale areas are gaps you are not serving.")
+            "and empty pale areas are gaps you are not serving."
+            + ("" if not notes else " " + " ".join(notes)))
 
     if matrix.size:
         flat = matrix.stack()
@@ -708,6 +863,63 @@ def scenario_crosstab(dataframe, profiles, key_prefix):
             f"reaching **{flat.max():,.0f}** {value_label}. "
             f"That is {pct(flat.max(), flat.sum())}% of everything shown in this grid."
         )
+
+
+MISPLACED_MAX_HERE = 0.20    # a stray value must be rare in the column it turned up in
+MISPLACED_MIN_RATIO = 3      # ...and this many times more common in its real home
+SAME_KIND_OVERLAP = 0.5      # two columns sharing this much vocabulary are the same kind
+
+
+def find_misplaced_values(dataframe, profiles, limit=4):
+    """Values sitting in a column they do not belong to.
+
+    A row that slipped a cell in the source spreadsheet leaves an order status
+    in the Region column and a region in the Sales Rep column. Nothing errors -
+    the reports simply draw a grid that is nine-tenths empty and rank performers
+    who do not exist. The give-away is a value that is rare where it appears and
+    common somewhere else.
+
+    Returns [(column, home_column, [values]), ...], worst first.
+    """
+    names = [p['name'] for p in profiles if p['role'] in ('category', 'geo', 'flag')]
+    if len(names) < 2:
+        return []
+
+    counts, totals = {}, {}
+    for name in names:
+        series = dataframe[name].dropna().astype(str).str.strip()
+        series = series[series != '']
+        if series.empty:
+            continue
+        counts[name] = series.value_counts()
+        totals[name] = len(series)
+
+    findings = []
+    for here in counts:
+        for home in counts:
+            if here == home:
+                continue
+            shared = counts[here].index.intersection(counts[home].index)
+            if not len(shared):
+                continue
+
+            # Billing City and Shipping City legitimately hold the same names.
+            # Two columns of the same kind are not evidence of anything.
+            if len(shared) > len(counts[here]) * SAME_KIND_OVERLAP:
+                continue
+
+            strays = [
+                value for value in shared
+                if counts[here][value] <= totals[here] * MISPLACED_MAX_HERE
+                and counts[home][value] >= max(MISPLACED_MIN_RATIO,
+                                               counts[here][value] * MISPLACED_MIN_RATIO)
+            ]
+            if strays:
+                strays.sort(key=lambda v: counts[home][v], reverse=True)
+                findings.append((here, home, strays))
+
+    findings.sort(key=lambda item: len(item[2]), reverse=True)
+    return findings[:limit]
 
 
 def scenario_quality(dataframe, profiles, key_prefix):
@@ -750,8 +962,17 @@ def scenario_quality(dataframe, profiles, key_prefix):
         names = ', '.join(humanize(c) for c in constants[:5])
         notes.append(f"These columns hold the same value in every row and tell you nothing: {names}.")
 
+    for column, home, strays in find_misplaced_values(dataframe, profiles):
+        shown = ', '.join(f"**{value}**" for value in strays[:4])
+        more = f" and {len(strays) - 4} more" if len(strays) > 4 else ""
+        notes.append(
+            f"**{humanize(column)}** contains {shown}{more} - values that belong in "
+            f"**{humanize(home)}**. Rows like these have almost certainly slipped a cell in the "
+            f"source sheet, which is what leaves empty bars and blank squares in the other reports."
+        )
+
     for note in notes:
-        st.warning("⚠️ " + note)
+        warn(note)
 
     if notes:
         st.caption("👉 Fix these in the source sheet, then sync again - every number above improves.")
@@ -764,12 +985,15 @@ def scenario_geography(dataframe, profiles, key_prefix):
     """Maps, driven by whichever geography column the data carries."""
     categories = dataframe.select_dtypes(include=['object', 'category', 'string']).columns.tolist()
     measures = rank_measures(profiles)
-    metric = st.selectbox("🗺️ What should the map show?",
-                          [m['name'] for m in measures] + ["Count (Frequency)"],
-                          format_func=metric_label, key=f"auto_geometric_{key_prefix}")
+    metric = pick("🗺️ What should the map show?",
+                  [m['name'] for m in measures] + ["Count (Frequency)"],
+                  f"auto_geometric_{key_prefix}", format_func=metric_label)
+    # Heading, then map, then the explanation - the same order as every other
+    # scenario, so the captured blocks read correctly in the PDF too.
+    chart_heading(f"🌍 Chart — Where does {metric_label(metric)} sit on the map?")
+    geo_maps.render_geo_section(dataframe, categories, metric, f"auto_{key_prefix}")
     explain("Darker areas and bigger pins mean higher numbers. Hover any place to see its "
             "exact value, and scroll to zoom in.")
-    geo_maps.render_geo_section(dataframe, categories, metric, f"auto_{key_prefix}")
 
 
 # --------------------------------------------------------------------------- #

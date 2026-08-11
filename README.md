@@ -158,7 +158,7 @@ sample_data.py                  Deterministic demo workbook
 assets/india_districts.geojson  Official India boundaries (incl. J&K and Ladakh)
 deploy/                         AWS provisioning and HTTPS scripts
 report_export.py                Renders the reports to PDF (Kaleido + fpdf2)
-tests/                          Nine suites — run tests/run_all.py
+tests/                          Ten suites — run tests/run_all.py
 ```
 
 ## 🧪 Tests

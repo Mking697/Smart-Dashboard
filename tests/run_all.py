@@ -26,6 +26,7 @@ SUITES = [
     ("test_table",   "Filters, pivot correctness, export"),
     ("test_html",    "Markup renders as HTML, buttons stay readable"),
     ("test_pdf",     "PDF export: capture mode, one report vs all"),
+    ("test_analysis", "Rates vs totals, date windows, misplaced values"),
 ]
 
 

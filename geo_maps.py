@@ -14,6 +14,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+import capture
 import geo_assets as geo
 import theme
 
@@ -204,6 +205,11 @@ def aggregate_by_place(dataframe, place_col, y_axis):
 
 def map_controls(key_prefix, allow_blink=False):
     """Zoom / projection (and optionally blink) switches shared by every map."""
+    if capture.active():
+        # No widgets during an export - the PDF gets the defaults. Blink is off
+        # because a still image cannot pulse.
+        return "🎯 Auto Fit", 'natural earth', False
+
     columns = st.columns(3 if allow_blink else 2)
 
     with columns[0]:
@@ -245,12 +251,41 @@ def style_and_render(fig, zoom, metric_label, key, height=580):
         margin=dict(l=0, r=0, t=60, b=0),
         coloraxis_colorbar=dict(title=metric_label),
     )
+    # Every region and pin map funnels through here, so this one line is what
+    # puts maps into the PDF. Without it the Location Map report exported as a
+    # heading and an explanation with nothing between them.
+    if capture.add("chart", fig):
+        return
     st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True}, key=key)
 
 
 def _leaderboard(agg, label_col, metric_label, top_n=5):
     top = agg.sort_values('Value', ascending=False).head(top_n)
     leaders = " · ".join(f"**{row[label_col]}** ({row['Value']:,.0f})" for _, row in top.iterrows())
+
+    if capture.active():
+        # A map exported as a picture says nothing on its own, and the PDF's
+        # summary page is built from findings - so state the finding in words.
+        total = agg['Value'].sum()
+        best = top.iloc[0]
+
+        if len(agg) == 1:
+            capture.add("takeaway",
+                        f"Every mapped record sits in **{best[label_col]}** - "
+                        f"{metric_label} of **{best['Value']:,.0f}**. There is nowhere else on "
+                        "this map to compare it against.")
+        else:
+            share = f", {100 * best['Value'] / total:.1f}% of everything mapped" if total else ""
+            runners = " · ".join(
+                f"**{row[label_col]}** ({row['Value']:,.0f})"
+                for _, row in top.iloc[1:].iterrows()
+            )
+            capture.add("takeaway",
+                        f"**{best[label_col]}** leads on {metric_label} with "
+                        f"**{best['Value']:,.0f}**{share}, out of {len(agg)} places. "
+                        f"Behind it: {runners}.")
+        return
+
     st.caption(f"🏆 Top by {metric_label}: {leaders}")
 
 
@@ -536,25 +571,33 @@ def render_geo_section(dataframe, cat_cols, y_axis, key_prefix):
     if not views:
         return
 
-    view = st.segmented_control(
+    # An export must not drop a row of pickers onto the page, so while a report
+    # is being captured every control is skipped and its default stands in.
+    exporting = capture.active()
+
+    view = views[0] if exporting else (st.segmented_control(
         "Map Style", views, default=views[0], key=f"geoview_{key_prefix}",
-    ) or views[0]
+    ) or views[0])
 
     if view == "🗺️ Region Map":
-        picked = st.selectbox("Location column to plot:", mappable, key=f"geocol_{key_prefix}")
+        picked = mappable[0] if exporting else st.selectbox(
+            "Location column to plot:", mappable, key=f"geocol_{key_prefix}")
         render_region_map(dataframe, picked, y_axis, modes[picked], key_prefix)
 
     elif view == "📍 Pin Map (Blinking)":
         if lat_col and lon_col:
             label_options = hierarchy or [None]
-            picked = st.selectbox("Label the pins with:", label_options, key=f"geopin_{key_prefix}")
+            picked = label_options[0] if exporting else st.selectbox(
+                "Label the pins with:", label_options, key=f"geopin_{key_prefix}")
             render_pin_map(dataframe, picked, y_axis, key_prefix, lat_col, lon_col)
         else:
-            picked = st.selectbox("City / district column:", pinnable, key=f"geopin_{key_prefix}")
+            picked = pinnable[0] if exporting else st.selectbox(
+                "City / district column:", pinnable, key=f"geopin_{key_prefix}")
             render_pin_map(dataframe, picked, y_axis, key_prefix)
 
     else:
-        st.info("💡 Click on any region/block to zoom in and see the drill-down details.")
+        if not exporting:
+            st.info("💡 Click on any region/block to zoom in and see the drill-down details.")
         render_treemap(dataframe, hierarchy[:4], key_prefix)
 
 
@@ -570,6 +613,8 @@ def render_treemap(dataframe, path_cols, key_prefix):
     try:
         fig = px.treemap(df_map, path=path_cols,
                          title=f"Geographical Drill-Down: {' ➡️ '.join(path_cols)}")
+        if capture.add("chart", fig):
+            return
         st.plotly_chart(fig, use_container_width=True, key=f"treemap_{key_prefix}")
     except Exception:
         st.warning("Map generation skipped due to unsupported data structure in location columns.")
